@@ -46,7 +46,7 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 };
 
 // JTKJ: Exercise 3. Definition of the state machine
-enum state { WAITING=1, DATA_READY };
+enum state { WAITING=1, DATA_READY, COLLECTING_DATA };
 enum state programState = WAITING;
 
 // JTKJ: Exercise 3. Global variable for ambient light
@@ -76,6 +76,17 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     uint_t pinValue = PIN_getOutputValue( Board_LED1 );
     pinValue = !pinValue;
     PIN_setOutputValue( ledHandle, Board_LED1, pinValue );
+    System_printf("Button was pressed\n");
+    System_flush();
+    if (programState == WAITING) {
+        programState = COLLECTING_DATA;
+        System_printf("programState: COLLECTING_DATA\n");
+        System_flush();
+    } else if (programState == COLLECTING_DATA) {
+        programState = WAITING;
+        System_printf("programState: WAITING\n");
+        System_flush();
+    }
 }
 
 /* Task Functions */
@@ -145,7 +156,6 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     i2cParams.bitRate = I2C_400kHz;
     double data;
 
-
     // MPU9250 -SENSOR INITIALIZATION
     i2cMPU = I2C_open(Board_I2C, &i2cMPUParams);
     if (i2cMPU == NULL) {
@@ -204,23 +214,30 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
         
         I2C_close(i2c);
         */
-        // MPU9250 DATA READ
-        i2cMPU = I2C_open(Board_I2C, &i2cMPUParams);
-        if (i2cMPU == NULL) {
-            System_abort("Error Initializing I2CMPU\n");
-        }
-        
-        // TODO: SIGNAALIN TASAUS
-        
-		mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
-        sprintf(printableData, "MPU9250 %.2f: %7.2f, %7.2f, %7.2f, %7.2f, %7.2f, %7.2f\n", systemTime, ax, ay, az, gx, gy, gz);
-        System_printf(printableData);
-        System_flush();
-        
-        I2C_close(i2cMPU);
 
-        // Once per 100ms, you can modify this
-        Task_sleep(100000 / Clock_tickPeriod);
+        // MPU9250 DATA READ
+        if (programState == COLLECTING_DATA) {
+            i2cMPU = I2C_open(Board_I2C, &i2cMPUParams);
+            if (i2cMPU == NULL) {
+                System_abort("Error Initializing I2CMPU\n");
+            }
+
+            // TODO: SIGNAALIN TASAUS
+            // ker‰‰ 15 arvoa jokaisesta akselista
+            // tee liukuvan keskiarvon laskeminen n‰ille
+            // tulosta siistitty data
+
+            mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
+
+            sprintf(printableData, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
+            System_printf(printableData);
+            System_flush();
+
+            I2C_close(i2cMPU);
+
+            // Once per 100ms, you can modify this
+            Task_sleep(100000 / Clock_tickPeriod);
+        }
     }
 }
 
