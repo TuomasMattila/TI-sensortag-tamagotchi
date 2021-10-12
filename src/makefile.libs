@@ -1,6 +1,6 @@
 #
 # This file was generated based on the configuration script:
-#     /home/guest/ide/default/Harjoitustyo/empty.cfg
+#     C:\Users\tuoma\Documents\Opiskelu_repot\Johdatus_tietokonejarjestelmiin\Jtkj-harjoitustyo\empty.cfg
 #
 # This makefile may be included in other makefiles that need to build
 # the libraries containing the compiled source files generated as
@@ -14,7 +14,7 @@
 #
 # The absolute path to the generated source directory (at the time the
 # sources were generated) is:
-#    /home/guest/ide/default/Harjoitustyo/src
+#    C:\Users\tuoma\Documents\Opiskelu_repot\Johdatus_tietokonejarjestelmiin\Jtkj-harjoitustyo\src
 #
 GEN_SRC_DIR ?= ../src
 
