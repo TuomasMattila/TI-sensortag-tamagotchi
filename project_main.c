@@ -148,6 +148,13 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     I2C_Params_init(&i2cMPUParams);
     i2cMPUParams.bitRate = I2C_400kHz;
     i2cMPUParams.custom = (uintptr_t)&i2cMPUCfg;
+    float rawMPUData[6][3];
+    float cleanMPUData[6];
+    float sum = 0.0;
+    int i = 0;
+    int j = 0;
+    int k = 0;
+    int l = 0;
     // OPT3001 variables
     I2C_Handle      i2c;
     I2C_Params      i2cParams;
@@ -189,7 +196,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     }
 
     // JTKJ: Exercise 2. Setup the OPT3001 sensor for use
-    //       Before calling the setup function, insertt 100ms delay with Task_sleep
+    //       Before calling the setup function, insert 100ms delay with Task_sleep
     Task_sleep(100000 / Clock_tickPeriod);
     opt3001_setup(&i2c);
     
@@ -228,8 +235,30 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             // tulosta siistitty data
 
             mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
+            rawMPUData[0][i] = ax;
+            rawMPUData[1][i] = ay;
+            rawMPUData[2][i] = az;
+            rawMPUData[3][i] = gx;
+            rawMPUData[4][i] = gy;
+            rawMPUData[5][i] = gz;
 
-            sprintf(printableData, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
+            if (i == 2) {
+                for(j = 0; j < 6; j++) {
+                    for(k = 0; k < 3; k++) {
+                        sum += rawMPUData[j][k];
+                    }
+                    cleanMPUData[j] = sum / 3;
+                    sum = 0;
+                }
+                for(l = 0; l < 6; l++) {
+                    rawMPUData[l][0] = rawMPUData[l][1];
+                    rawMPUData[l][1] = rawMPUData[l][2];
+                }
+            } else {
+                i++;
+            }
+            //sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
+            sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, cleanMPUData[0], cleanMPUData[1], cleanMPUData[2], cleanMPUData[3], cleanMPUData[4], cleanMPUData[5]);
             System_printf(printableData);
             System_flush();
 
