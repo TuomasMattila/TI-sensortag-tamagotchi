@@ -55,7 +55,7 @@ enum state programState = WAITING;
 double ambientLight = -1000.0;
 
 // Global variable for system time
-double systemTime = 0.0;
+float systemTime = 0.0;
 
 // JTKJ: Exercise 1. Add pins RTOS-variables and configuration here
 static PIN_Handle buttonHandle;
@@ -261,6 +261,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             }
             /*
             // TODO: FIND OUT WHY THIS CAUSES ERRORS
+            // UPDATE: THE REASON MIGTH HAVE BEEN THAT THE systemTime VARIABLE WAS DOUBLE, NOT FLOAT. TESTING REQUIRED FOR CONFIRMING THIS.
             finalDataTable[0][m] = systemTime;
             finalDataTable[1][m] = cleanMPUData[0];
             finalDataTable[2][m] = cleanMPUData[1];
@@ -288,6 +289,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
         } else {
             if (programState == SHOW_RESULTS) {
                 // TODO: FIND OUT WHY THIS CAUSES ERRORS
+                // UPDATE: THE REASON MIGTH HAVE BEEN THAT THE systemTime VARIABLE WAS DOUBLE, NOT FLOAT. TESTING REQUIRED FOR CONFIRMING THIS.
                 /*for(m = 0; m < 100; m++) {
                     sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
                     System_printf(printableData);
@@ -302,7 +304,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
 
 // Kellokeskeytyksen käsittelijä
 Void clkFxn(UArg arg0) {
-   systemTime = (double)Clock_getTicks() / 100000.0;
+   systemTime = (float)Clock_getTicks() / 100000.0;
 }
 
 Int main(void) {
