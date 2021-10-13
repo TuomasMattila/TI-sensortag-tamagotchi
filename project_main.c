@@ -1,5 +1,7 @@
 /* C Standard library */
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 
 /* XDCtools files */
 #include <xdc/std.h>
@@ -46,7 +48,7 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 };
 
 // JTKJ: Exercise 3. Definition of the state machine
-enum state { WAITING=1, DATA_READY, COLLECTING_DATA };
+enum state { WAITING=1, DATA_READY, COLLECTING_DATA, SHOW_RESULTS };
 enum state programState = WAITING;
 
 // JTKJ: Exercise 3. Global variable for ambient light
@@ -83,8 +85,8 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
         System_printf("programState: COLLECTING_DATA\n");
         System_flush();
     } else if (programState == COLLECTING_DATA) {
-        programState = WAITING;
-        System_printf("programState: WAITING\n");
+        programState = SHOW_RESULTS;
+        System_printf("programState: SHOW_RESULTS\n");
         System_flush();
     }
 }
@@ -142,7 +144,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
 Void sensorTaskFxn(UArg arg0, UArg arg1) {
     // MPU9250 variables
     float ax, ay, az, gx, gy, gz;
-	char printableData[80] = {0};
+	char printableData[256] = {0};
 	I2C_Handle i2cMPU; // Own i2c-interface for MPU9250 sensor
 	I2C_Params i2cMPUParams;
     I2C_Params_init(&i2cMPUParams);
@@ -150,6 +152,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     i2cMPUParams.custom = (uintptr_t)&i2cMPUCfg;
     float rawMPUData[6][3];
     float cleanMPUData[6];
+    float finalDataTable[7][100];
+    int m = 0;
     float sum = 0.0;
     int i = 0;
     int j = 0;
@@ -202,7 +206,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     
     I2C_close(i2c);
 
-    while (1) {/*
+    while (1) {
+        /*
         // OPT3001 DATA READ
         i2c = I2C_open(Board_I2C_TMP, &i2cParams);
         if (i2c == NULL) {
@@ -229,19 +234,16 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                 System_abort("Error Initializing I2CMPU\n");
             }
 
-            // TODO: SIGNAALIN TASAUS
-            // ker‰‰ 15 arvoa jokaisesta akselista
-            // tee liukuvan keskiarvon laskeminen n‰ille
-            // tulosta siistitty data
-
+            // Get data
             mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
+
+            // Average data
             rawMPUData[0][i] = ax;
             rawMPUData[1][i] = ay;
             rawMPUData[2][i] = az;
             rawMPUData[3][i] = gx;
             rawMPUData[4][i] = gy;
             rawMPUData[5][i] = gz;
-
             if (i == 2) {
                 for(j = 0; j < 6; j++) {
                     for(k = 0; k < 3; k++) {
@@ -257,8 +259,25 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             } else {
                 i++;
             }
-            //sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
-            sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, cleanMPUData[0], cleanMPUData[1], cleanMPUData[2], cleanMPUData[3], cleanMPUData[4], cleanMPUData[5]);
+            /*
+            // TODO: FIND OUT WHY THIS CAUSES ERRORS
+            finalDataTable[0][m] = systemTime;
+            finalDataTable[1][m] = cleanMPUData[0];
+            finalDataTable[2][m] = cleanMPUData[1];
+            finalDataTable[3][m] = cleanMPUData[2];
+            finalDataTable[4][m] = cleanMPUData[3];
+            finalDataTable[5][m] = cleanMPUData[4];
+            finalDataTable[6][m] = cleanMPUData[5];
+            m++;
+            */
+
+            /*
+            sprintf(printableData, "Raw data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
+            System_printf(printableData);
+            System_flush();
+            */
+
+            sprintf(printableData, "Averaged data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, cleanMPUData[0], cleanMPUData[1], cleanMPUData[2], cleanMPUData[3], cleanMPUData[4], cleanMPUData[5]);
             System_printf(printableData);
             System_flush();
 
@@ -266,7 +285,18 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
 
             // Once per 100ms, you can modify this
             Task_sleep(100000 / Clock_tickPeriod);
+        } else {
+            if (programState == SHOW_RESULTS) {
+                // TODO: FIND OUT WHY THIS CAUSES ERRORS
+                /*for(m = 0; m < 100; m++) {
+                    sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
+                    System_printf(printableData);
+                    System_flush();
+                }*/
+                programState = WAITING;
+            }
         }
+
     }
 }
 
