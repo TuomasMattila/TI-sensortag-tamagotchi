@@ -27,7 +27,7 @@
 
 /* Task */
 #define STACKSIZE 2048
-Char sensorTaskStack[STACKSIZE];
+Char sensorTaskStack[2*STACKSIZE];
 Char uartTaskStack[STACKSIZE];
 Char taskStack[STACKSIZE];
 
@@ -56,6 +56,9 @@ double ambientLight = -1000.0;
 
 // Global variable for system time
 float systemTime = 0.0;
+
+// Global variable for MPU9250 data
+float finalDataTable[7][50];
 
 // JTKJ: Exercise 1. Add pins RTOS-variables and configuration here
 static PIN_Handle buttonHandle;
@@ -95,7 +98,8 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
 Void uartTaskFxn(UArg arg0, UArg arg1) {
     // JTKJ: Exercise 4. Setup here UART connection as 9600,8n1
     char input;
-    char merkkijono[30];
+    char output[80];
+    int m = 0;
     
     // UART-kirjaston asetukset
     UART_Handle uart;
@@ -107,7 +111,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     uartParams.readDataMode = UART_DATA_TEXT;
     uartParams.readEcho = UART_ECHO_OFF;
     uartParams.readMode=UART_MODE_BLOCKING;
-    uartParams.baudRate = 9600; // nopeus 9600baud
+    uartParams.baudRate = 57600; // nopeus 9600baud
     uartParams.dataLength = UART_LEN_8; // 8
     uartParams.parityType = UART_PAR_NONE; // n
     uartParams.stopBits = UART_STOP_ONE; // 1
@@ -122,15 +126,31 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         // JTKJ: Exercise 3. Print out sensor data as string to debug window if the state is correct
         //       Remember to modify state
         if(programState == DATA_READY) {
-            sprintf(merkkijono, "uartTask: %f\n", ambientLight);
-            //System_printf(merkkijono);
-            System_flush();
+            sprintf(output, "uartTask: %f\n", ambientLight);
+            //System_printf(output);
+            //System_flush();
             programState = WAITING;
         }
-
+/*
+        if (programState == SHOW_RESULTS) {
+            // TODO: FIND OUT WHY THIS CAUSES ERRORS
+            for(m = 0; m < 50; m++) {
+                sprintf(output, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\r\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
+                finalDataTable[0][m] = 0;
+                finalDataTable[1][m] = 0;
+                finalDataTable[2][m] = 0;
+                finalDataTable[3][m] = 0;
+                finalDataTable[4][m] = 0;
+                finalDataTable[5][m] = 0;
+                finalDataTable[6][m] = 0;
+                UART_write(uart, output, strlen(output));
+            }
+            programState = WAITING;
+        }
+*/
         // JTKJ: Exercise 4. Send the same sensor data string with UART
 
-        UART_write(uart, merkkijono, strlen(merkkijono));
+        //UART_write(uart, output, strlen(output));
 
         // Just for sanity check for exercise, you can comment this out
         // System_printf("uartTask\n");
@@ -144,7 +164,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
 Void sensorTaskFxn(UArg arg0, UArg arg1) {
     // MPU9250 variables
     float ax, ay, az, gx, gy, gz;
-	char printableData[256] = {0};
+	char printableData[80] = {0};
 	I2C_Handle i2cMPU; // Own i2c-interface for MPU9250 sensor
 	I2C_Params i2cMPUParams;
     I2C_Params_init(&i2cMPUParams);
@@ -152,7 +172,6 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     i2cMPUParams.custom = (uintptr_t)&i2cMPUCfg;
     float rawMPUData[6][3];
     float cleanMPUData[6];
-    float finalDataTable[7][100];
     int m = 0;
     float sum = 0.0;
     int i = 0;
@@ -223,6 +242,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
         //       Remember to modify state
         ambientLight = data;
         programState = DATA_READY;
+        // TODO: TSEKKAA VALOISUUDEN ARVO KERRAN SEKUNNISSA, JA JOS 5 SEKUNTIA PUTKEEN ALLE TIETYN ARVON, ALOITA 'NUKKUMINEN'
+
         
         I2C_close(i2c);
         */
@@ -259,46 +280,72 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             } else {
                 i++;
             }
-            /*
+
             // TODO: FIND OUT WHY THIS CAUSES ERRORS
-            // UPDATE: THE REASON MIGTH HAVE BEEN THAT THE systemTime VARIABLE WAS DOUBLE, NOT FLOAT. TESTING REQUIRED FOR CONFIRMING THIS.
-            finalDataTable[0][m] = systemTime;
-            finalDataTable[1][m] = cleanMPUData[0];
-            finalDataTable[2][m] = cleanMPUData[1];
-            finalDataTable[3][m] = cleanMPUData[2];
-            finalDataTable[4][m] = cleanMPUData[3];
-            finalDataTable[5][m] = cleanMPUData[4];
-            finalDataTable[6][m] = cleanMPUData[5];
-            m++;
-            */
+            if (m < 50 ) {
+                finalDataTable[0][m] = systemTime;
+                finalDataTable[1][m] = cleanMPUData[0];
+                finalDataTable[2][m] = cleanMPUData[1];
+                finalDataTable[3][m] = cleanMPUData[2];
+                finalDataTable[4][m] = cleanMPUData[3];
+                finalDataTable[5][m] = cleanMPUData[4];
+                finalDataTable[6][m] = cleanMPUData[5];
+                m++;
+            }
 
             /*
             sprintf(printableData, "Raw data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
             System_printf(printableData);
             System_flush();
             */
-
+/*
             sprintf(printableData, "Averaged data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, cleanMPUData[0], cleanMPUData[1], cleanMPUData[2], cleanMPUData[3], cleanMPUData[4], cleanMPUData[5]);
             System_printf(printableData);
             System_flush();
-
+*/
             I2C_close(i2cMPU);
 
-            // Once per 100ms, you can modify this
-            Task_sleep(100000 / Clock_tickPeriod);
-        } else {
-            if (programState == SHOW_RESULTS) {
+            if (m == 49) {
                 // TODO: FIND OUT WHY THIS CAUSES ERRORS
-                // UPDATE: THE REASON MIGTH HAVE BEEN THAT THE systemTime VARIABLE WAS DOUBLE, NOT FLOAT. TESTING REQUIRED FOR CONFIRMING THIS.
-                /*for(m = 0; m < 100; m++) {
+                programState = SHOW_RESULTS;
+                for(m = 0; m < 50; m++) {
                     sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
+                    finalDataTable[0][m] = 0;
+                    finalDataTable[1][m] = 0;
+                    finalDataTable[2][m] = 0;
+                    finalDataTable[3][m] = 0;
+                    finalDataTable[4][m] = 0;
+                    finalDataTable[5][m] = 0;
+                    finalDataTable[6][m] = 0;
                     System_printf(printableData);
                     System_flush();
-                }*/
+                }
                 programState = WAITING;
+                m = 0;
             }
-        }
 
+        }/* else {
+            if (m == 49) {
+                // TODO: FIND OUT WHY THIS CAUSES ERRORS
+                programState = SHOW_RESULTS;
+                for(m = 0; m < 50; m++) {
+                    sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
+                    finalDataTable[0][m] = 0;
+                    finalDataTable[1][m] = 0;
+                    finalDataTable[2][m] = 0;
+                    finalDataTable[3][m] = 0;
+                    finalDataTable[4][m] = 0;
+                    finalDataTable[5][m] = 0;
+                    finalDataTable[6][m] = 0;
+                    System_printf(printableData);
+                    System_flush();
+                }
+                programState = WAITING;
+                m = 0;
+            }
+        }*/
+        // Once per 100ms, you can modify this
+        Task_sleep(100000 / Clock_tickPeriod);
     }
 }
 
