@@ -61,11 +61,24 @@ float systemTime = 0.0;
 float finalDataTable[7][50];
 
 // JTKJ: Exercise 1. Add pins RTOS-variables and configuration here
+static PIN_Handle powerButtonHandle;
+static PIN_State powerButtonState;
 static PIN_Handle buttonHandle;
 static PIN_State buttonState;
 static PIN_Handle ledHandle;
 static PIN_State ledState;
 
+// POWER BUTTON
+PIN_Config powerButtonConfig[] = {
+   Board_BUTTON1 | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_NEGEDGE,
+   PIN_TERMINATE
+};
+PIN_Config powerButtonWakeConfig[] = {
+   Board_BUTTON1 | PIN_INPUT_EN | PIN_PULLUP | PINCC26XX_WAKEUP_NEGEDGE,
+   PIN_TERMINATE
+};
+
+// OTHER BUTTON
 PIN_Config buttonConfig[] = {
    Board_BUTTON0  | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_NEGEDGE, 
    PIN_TERMINATE // Asetustaulukko lopetetaan aina tällä vakiolla
@@ -75,6 +88,24 @@ PIN_Config ledConfig[] = {
    Board_LED1 | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX, 
    PIN_TERMINATE // Asetustaulukko lopetetaan aina tällä vakiolla
 };
+
+Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
+
+    // Turn off screen:
+    // Display_clear(displayHandle);
+    // Display_close(displayHandle);
+
+    System_printf("Power button was pressed.");
+    System_flush();
+
+    // Sleep for 100ms...
+    Task_sleep(100000 / Clock_tickPeriod);
+
+    // Taikamenot
+    PIN_close(powerButtonHandle);
+    PINCC26XX_setWakeup(powerButtonWakeConfig);
+    Power_shutdown(NULL,0);
+}
 
 void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     // JTKJ: Exercise 1. Blink either led of the device
@@ -155,7 +186,12 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         // Just for sanity check for exercise, you can comment this out
         // System_printf("uartTask\n");
         // System_flush();
-
+/*
+        // Red led turns on/off every second if this is included
+        uint_t pinValue = PIN_getOutputValue( Board_LED1 );
+        pinValue = !pinValue;
+        PIN_setOutputValue( ledHandle, Board_LED1, pinValue );
+*/
         // Once per second, you can modify this
         Task_sleep(1000000 / Clock_tickPeriod);
     }
@@ -184,7 +220,11 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     I2C_Transaction i2cMessage;
     I2C_Params_init(&i2cParams);
     i2cParams.bitRate = I2C_400kHz;
-    double data;
+    double data[5] = {30, 30, 30, 30, 30};
+    int earlierTime = 0;
+    int n = 0;
+    int o = 0;
+    int isDarkEnough = 0;
 
     // MPU9250 -SENSOR INITIALIZATION
     i2cMPU = I2C_open(Board_I2C, &i2cMPUParams);
@@ -225,28 +265,52 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     
     I2C_close(i2c);
 
-    while (1) {
-        /*
-        // OPT3001 DATA READ
-        i2c = I2C_open(Board_I2C_TMP, &i2cParams);
-        if (i2c == NULL) {
-           System_abort("Error Initializing I2C\n");
-        }
-        // JTKJ: Exercise 2. Read sensor data and print it to the Debug window as string
-        data = opt3001_get_data(&i2c);
-        char merkkijono[20];
-        sprintf(merkkijono, "OPT3001: %f\n", data);
-        System_printf(merkkijono);
-        System_flush();
-        // JTKJ: Exercise 3. Save the sensor value into the global variable
-        //       Remember to modify state
-        ambientLight = data;
-        programState = DATA_READY;
-        // TODO: TSEKKAA VALOISUUDEN ARVO KERRAN SEKUNNISSA, JA JOS 5 SEKUNTIA PUTKEEN ALLE TIETYN ARVON, ALOITA 'NUKKUMINEN'
+    earlierTime = (int)systemTime;
 
-        
-        I2C_close(i2c);
-        */
+    while (1) {
+
+        // OPT3001 DATA READ
+        if ((int)systemTime == earlierTime+1) { // OPT3001 data is read once per second
+            earlierTime = (int)systemTime;
+            i2c = I2C_open(Board_I2C_TMP, &i2cParams);
+            if (i2c == NULL) {
+               System_abort("Error Initializing I2C\n");
+            }
+            // JTKJ: Exercise 2. Read sensor data and print it to the Debug window as string
+            data[n] = opt3001_get_data(&i2c);
+            char merkkijono[20];
+            sprintf(merkkijono, "OPT3001: %f\n", data[n]);
+            System_printf(merkkijono);
+            System_flush();
+
+            // Check whether it has been dark enough for 5 seconds
+            if (n == 4) {
+                for(o = 0; o < 5; o++) {
+                    if(data[o] > 5) {
+                        isDarkEnough = 0;
+                        break;
+                    } else if (o == 4){
+                        isDarkEnough = 1;
+                    }
+                }
+                if (isDarkEnough) {
+                    System_printf("Sleeping... ");
+                    System_flush();
+                }
+                for(o = 0; o < 4; o++) {
+                    data[o] = data[o+1];
+                }
+            } else {
+                n++;
+            }
+
+            // JTKJ: Exercise 3. Save the sensor value into the global variable
+            //       Remember to modify state
+            ambientLight = data[n];
+            programState = DATA_READY;
+
+            I2C_close(i2c);
+        }
 
         // MPU9250 DATA READ
         if (programState == COLLECTING_DATA) {
@@ -281,7 +345,6 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                 i++;
             }
 
-            // TODO: FIND OUT WHY THIS CAUSES ERRORS
             if (m < 50 ) {
                 finalDataTable[0][m] = systemTime;
                 finalDataTable[1][m] = cleanMPUData[0];
@@ -298,15 +361,14 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             System_printf(printableData);
             System_flush();
             */
-/*
+            /*
             sprintf(printableData, "Averaged data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, cleanMPUData[0], cleanMPUData[1], cleanMPUData[2], cleanMPUData[3], cleanMPUData[4], cleanMPUData[5]);
             System_printf(printableData);
             System_flush();
-*/
+            */
             I2C_close(i2cMPU);
 
             if (m == 49) {
-                // TODO: FIND OUT WHY THIS CAUSES ERRORS
                 programState = SHOW_RESULTS;
                 for(m = 0; m < 50; m++) {
                     sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
@@ -324,26 +386,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                 m = 0;
             }
 
-        }/* else {
-            if (m == 49) {
-                // TODO: FIND OUT WHY THIS CAUSES ERRORS
-                programState = SHOW_RESULTS;
-                for(m = 0; m < 50; m++) {
-                    sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
-                    finalDataTable[0][m] = 0;
-                    finalDataTable[1][m] = 0;
-                    finalDataTable[2][m] = 0;
-                    finalDataTable[3][m] = 0;
-                    finalDataTable[4][m] = 0;
-                    finalDataTable[5][m] = 0;
-                    finalDataTable[6][m] = 0;
-                    System_printf(printableData);
-                    System_flush();
-                }
-                programState = WAITING;
-                m = 0;
-            }
-        }*/
+        }
         // Once per 100ms, you can modify this
         Task_sleep(100000 / Clock_tickPeriod);
     }
@@ -390,20 +433,29 @@ Int main(void) {
     // JTKJ: Exercise 1. Open the button and led pins
     //       Remember to register the above interrupt handler for button
     // Otetaan pinnit käyttöön ohjelmassa
-   buttonHandle = PIN_open(&buttonState, buttonConfig);
-   if(!buttonHandle) {
-      System_abort("Error initializing button pins\n");
-   }
-   ledHandle = PIN_open(&ledState, ledConfig);
-   if(!ledHandle) {
-      System_abort("Error initializing LED pins\n");
-   }
+    powerButtonHandle = PIN_open(&powerButtonState, powerButtonConfig);
+    if(!powerButtonHandle) {
+       System_abort("Error initializing power button\n");
+    }
+    if (PIN_registerIntCb(powerButtonHandle, &powerFxn) != 0) {
+       System_abort("Error registering power button callback");
+    }
 
-   // Asetetaan painonappi-pinnille keskeytyksen käsittelijäksi
-   // funktio buttonFxn
-   if (PIN_registerIntCb(buttonHandle, &buttonFxn) != 0) {
+    buttonHandle = PIN_open(&buttonState, buttonConfig);
+    if(!buttonHandle) {
+      System_abort("Error initializing button pins\n");
+    }
+
+    ledHandle = PIN_open(&ledState, ledConfig);
+    if(!ledHandle) {
+      System_abort("Error initializing LED pins\n");
+    }
+
+    // Asetetaan painonappi-pinnille keskeytyksen käsittelijäksi
+    // funktio buttonFxn
+    if (PIN_registerIntCb(buttonHandle, &buttonFxn) != 0) {
       System_abort("Error registering button callback function");
-   }
+    }
 
     // Open MPU power pin
     hMpuPin = PIN_open(&MpuPinState, MpuPinConfig);
