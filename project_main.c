@@ -270,6 +270,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     while (1) {
 
         // OPT3001 DATA READ
+        /*
         if ((int)systemTime == earlierTime+1) { // OPT3001 data is read once per second
             earlierTime = (int)systemTime;
             i2c = I2C_open(Board_I2C_TMP, &i2cParams);
@@ -311,6 +312,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
 
             I2C_close(i2c);
         }
+        */
 
         // MPU9250 DATA READ
         if (programState == COLLECTING_DATA) {
@@ -345,16 +347,28 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                 i++;
             }
 
-            if (m < 50 ) {
-                finalDataTable[0][m] = systemTime;
-                finalDataTable[1][m] = cleanMPUData[0];
-                finalDataTable[2][m] = cleanMPUData[1];
-                finalDataTable[3][m] = cleanMPUData[2];
-                finalDataTable[4][m] = cleanMPUData[3];
-                finalDataTable[5][m] = cleanMPUData[4];
-                finalDataTable[6][m] = cleanMPUData[5];
-                m++;
+            // Collects data continuously, when table is full, values are shifted left and the last value is placed to the end of the table
+            if (m == 49) {
+                for(m = 0; m < 49; m++) {
+                    finalDataTable[0][m] = finalDataTable[0][m+1];
+                    finalDataTable[1][m] = finalDataTable[1][m+1];
+                    finalDataTable[2][m] = finalDataTable[2][m+1];
+                    finalDataTable[3][m] = finalDataTable[3][m+1];
+                    finalDataTable[4][m] = finalDataTable[4][m+1];
+                    finalDataTable[5][m] = finalDataTable[5][m+1];
+                    finalDataTable[6][m] = finalDataTable[6][m+1];
+                }
             }
+
+            finalDataTable[0][m] = systemTime;
+            finalDataTable[1][m] = cleanMPUData[0];
+            finalDataTable[2][m] = cleanMPUData[1];
+            finalDataTable[3][m] = cleanMPUData[2];
+            finalDataTable[4][m] = cleanMPUData[3];
+            finalDataTable[5][m] = cleanMPUData[4];
+            finalDataTable[6][m] = cleanMPUData[5];
+
+            // TODO: implement average derivate calculations
 
             /*
             sprintf(printableData, "Raw data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
@@ -368,6 +382,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             */
             I2C_close(i2cMPU);
 
+            /*
             if (m == 49) {
                 programState = SHOW_RESULTS;
                 for(m = 0; m < 50; m++) {
@@ -385,8 +400,31 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                 programState = WAITING;
                 m = 0;
             }
+            */
+
+            if (m < 49) {
+                m++;
+            }
 
         }
+
+        if (programState == SHOW_RESULTS) {
+            for(m = 0; m < 50; m++) {
+                sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
+                finalDataTable[0][m] = 0;
+                finalDataTable[1][m] = 0;
+                finalDataTable[2][m] = 0;
+                finalDataTable[3][m] = 0;
+                finalDataTable[4][m] = 0;
+                finalDataTable[5][m] = 0;
+                finalDataTable[6][m] = 0;
+                System_printf(printableData);
+                System_flush();
+            }
+            programState = WAITING;
+            m = 0;
+        }
+
         // Once per 100ms, you can modify this
         Task_sleep(100000 / Clock_tickPeriod);
     }
