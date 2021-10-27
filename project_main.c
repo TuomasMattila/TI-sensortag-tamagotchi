@@ -57,8 +57,10 @@ double ambientLight = -1000.0;
 // Global variable for system time
 float systemTime = 0.0;
 
-// Global variable for MPU9250 data
+// Global variables for MPU9250 data
 float finalDataTable[7][50];
+float derivates[6][49];
+float averageDerivates[6];
 
 // JTKJ: Exercise 1. Add pins RTOS-variables and configuration here
 static PIN_Handle powerButtonHandle;
@@ -88,6 +90,10 @@ PIN_Config ledConfig[] = {
    Board_LED1 | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX, 
    PIN_TERMINATE // Asetustaulukko lopetetaan aina tällä vakiolla
 };
+
+void derivateCalculations(int m);
+// TODO: in the derivateCalculations function, we should pause the prints based on the systemTime -variable, rather than this one below
+int derivateIndex = 0; // An index variable used to make sure the derivateCalculations -function does not print too often
 
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
@@ -162,6 +168,10 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
             //System_flush();
             programState = WAITING;
         }
+
+        sprintf(output, "Time: %.0f\n\r", systemTime);
+        UART_write(uart, output, strlen(output));
+
 /*
         if (programState == SHOW_RESULTS) {
             for(m = 0; m < 50; m++) {
@@ -368,7 +378,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             finalDataTable[5][m] = cleanMPUData[4];
             finalDataTable[6][m] = cleanMPUData[5];
 
-            // TODO: implement average derivate calculations
+            // Derivate calculations
+            derivateCalculations(m);
 
             /*
             sprintf(printableData, "Raw data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
@@ -431,6 +442,120 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
         // Once per 100ms, you can modify this
         Task_sleep(100000 / Clock_tickPeriod);
     }
+}
+
+/* This function calculates the speed at which the MPU-sensor's values change,
+ * a.k.a. it calculates derivates between two most recent values. This function should be
+ * called everytime a value is added to the finalDataTable.
+ *      Then, if the table is full, the function calculates the average derivate for each
+ * axis. Practically this means that the function calculates what the average derivate
+ * was during the last 5 seconds. If the average is over 3, the function prints a debug
+ * string indicating which axis it was.
+ *      For this function to work, you will need these global variables (for now):
+ * - float finalDataTable[7][50];
+ * - float derivates[6][49];
+ * - float averageDerivates[6];
+ * - int derivateIndex = 0;
+ *
+ */
+void derivateCalculations(int m) {
+    char output[80];
+
+    // calculate derivates
+    if (m > 0) {
+        derivates[0][m-1] = fabs(finalDataTable[1][m] - finalDataTable[1][m-1]) / 0.1;
+        derivates[1][m-1] = fabs(finalDataTable[2][m] - finalDataTable[2][m-1]) / 0.1;
+        derivates[2][m-1] = fabs(finalDataTable[3][m] - finalDataTable[3][m-1]) / 0.1;
+        derivates[3][m-1] = fabs(finalDataTable[4][m] - finalDataTable[4][m-1]) / 0.1;
+        derivates[4][m-1] = fabs(finalDataTable[5][m] - finalDataTable[5][m-1]) / 0.1;
+        derivates[5][m-1] = fabs(finalDataTable[6][m] - finalDataTable[6][m-1]) / 0.1;
+    }
+
+    // if table is full, calculate average derivates
+    if (m == 49 && derivateIndex == 49) {
+        // Calculate sums of the derivate values
+        for(m = 0; m < 49; m++) {
+            averageDerivates[0] += derivates[0][m];
+            averageDerivates[1] += derivates[1][m];
+            averageDerivates[2] += derivates[2][m];
+            averageDerivates[3] += derivates[3][m];
+            averageDerivates[4] += derivates[4][m];
+            averageDerivates[5] += derivates[5][m];
+        }
+        // Shift values left to make room for the next value
+        for(m = 0; m < 48; m++) {
+            derivates[0][m] = derivates[0][m+1];
+            derivates[1][m] = derivates[1][m+1];
+            derivates[2][m] = derivates[2][m+1];
+            derivates[3][m] = derivates[3][m+1];
+            derivates[4][m] = derivates[4][m+1];
+            derivates[5][m] = derivates[5][m+1];
+        }
+        // Calculate average for each axis' derivates
+        averageDerivates[0] = averageDerivates[0] / 49;
+        averageDerivates[1] = averageDerivates[1] / 49;
+        averageDerivates[2] = averageDerivates[2] / 49;
+        averageDerivates[3] = averageDerivates[3] / 49;
+        averageDerivates[4] = averageDerivates[4] / 49;
+        averageDerivates[5] = averageDerivates[5] / 49;
+
+        // If average derivate is over 3, print debug info and zero all values
+        if (averageDerivates[0] > 3) {
+            sprintf(output, "X-axis motion (averageDerivates[0]: %.2f)\n", averageDerivates[0]);
+            System_printf(output);
+            System_flush();
+            for(m = 0; m < 49; m++) {
+                derivates[0][m] = 0;
+                derivates[1][m] = 0;
+                derivates[2][m] = 0;
+                derivates[3][m] = 0;
+                derivates[4][m] = 0;
+                derivates[5][m] = 0;
+            }
+            derivateIndex = 0;
+        }
+        if (averageDerivates[1] > 3) {
+            sprintf(output, "Y-axis motion (averageDerivates[1]: %.2f)\n", averageDerivates[1]);
+            System_printf(output);
+            System_flush();
+            for(m = 0; m < 49; m++) {
+                derivates[0][m] = 0;
+                derivates[1][m] = 0;
+                derivates[2][m] = 0;
+                derivates[3][m] = 0;
+                derivates[4][m] = 0;
+                derivates[5][m] = 0;
+            }
+            derivateIndex = 0;
+        }
+        if (averageDerivates[2] > 3) {
+            sprintf(output, "Z-axis motion (averageDerivates[2]: %.2f)\n", averageDerivates[2]);
+            System_printf(output);
+            System_flush();
+            for(m = 0; m < 49; m++) {
+                derivates[0][m] = 0;
+                derivates[1][m] = 0;
+                derivates[2][m] = 0;
+                derivates[3][m] = 0;
+                derivates[4][m] = 0;
+                derivates[5][m] = 0;
+            }
+            derivateIndex = 0;
+        }
+
+        // Zero all average values after each call
+        averageDerivates[0] = 0;
+        averageDerivates[1] = 0;
+        averageDerivates[2] = 0;
+        averageDerivates[3] = 0;
+        averageDerivates[4] = 0;
+        averageDerivates[5] = 0;
+    }
+
+    if (derivateIndex < 49) {
+        derivateIndex++;
+    }
+
 }
 
 // Kellokeskeytyksen käsittelijä
