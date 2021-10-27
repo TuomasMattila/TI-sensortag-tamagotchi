@@ -164,7 +164,6 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         }
 /*
         if (programState == SHOW_RESULTS) {
-            // TODO: FIND OUT WHY THIS CAUSES ERRORS
             for(m = 0; m < 50; m++) {
                 sprintf(output, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\r\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
                 finalDataTable[0][m] = 0;
@@ -214,6 +213,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     int j = 0;
     int k = 0;
     int l = 0;
+    int isTableFull = 0;
     // OPT3001 variables
     I2C_Handle      i2c;
     I2C_Params      i2cParams;
@@ -348,7 +348,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             }
 
             // Collects data continuously, when table is full, values are shifted left and the last value is placed to the end of the table
-            if (m == 49) {
+            if (isTableFull) {
                 for(m = 0; m < 49; m++) {
                     finalDataTable[0][m] = finalDataTable[0][m+1];
                     finalDataTable[1][m] = finalDataTable[1][m+1];
@@ -404,6 +404,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
 
             if (m < 49) {
                 m++;
+            } else {
+                isTableFull = 1;
             }
 
         }
@@ -423,6 +425,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             }
             programState = WAITING;
             m = 0;
+            isTableFull = 0;
         }
 
         // Once per 100ms, you can modify this
