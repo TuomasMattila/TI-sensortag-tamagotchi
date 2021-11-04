@@ -30,6 +30,7 @@
 Char sensorTaskStack[2*STACKSIZE];
 Char uartTaskStack[STACKSIZE];
 Char taskStack[STACKSIZE];
+Char commTaskStack[STACKSIZE];
 
 // MPU power pin global variables
 static PIN_Handle hMpuPin;
@@ -114,10 +115,26 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 }
 
 void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
-    // JTKJ: Exercise 1. Blink either led of the device
+    /*
+    // Wireless communication testing
+    uint16_t DestAddr = 0x1234;
+    char payload[16] = "ping";
+    Send6LoWPAN(DestAddr, payload, strlen(payload));
+
+    // Hox! Radio aina takaisin vastaanottotilaan ao. funktiokutssulla
+    // Hox2! Tässä ei enää tarkisteta paluuarvoa.. tarkistus vain alustuksessa.
+    StartReceive6LoWPAN();
+    */
+
+    /*
+    // Blink led
+    // If this led is on, the ambient light values stay very high (over 100)
     uint_t pinValue = PIN_getOutputValue( Board_LED1 );
     pinValue = !pinValue;
     PIN_setOutputValue( ledHandle, Board_LED1, pinValue );
+    */
+
+    // Change program state
     System_printf("Button was pressed\n");
     System_flush();
     if (programState == WAITING) {
@@ -131,9 +148,39 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     }
 }
 
+// Tiedonsiirtotaski
+Void commTask(UArg arg0, UArg arg1) {
+    char payload[16]; // viestipuskuri
+    uint16_t senderAddr;
+
+    // Radio alustetaan vastaanottotilaan
+    int32_t result = StartReceive6LoWPAN();
+    if(result != true) {
+      System_abort("Wireless receive start failed");
+    }
+
+    // Vastaanotetaan viestejä loopissa
+    while (1) {
+        // HUOM! VIESTEJÄ EI SAA LÄHETTÄÄ TÄSSÄ SILMUKASSA
+        // Viestejä lähtee niin usein, että se tukkii laitteen radion ja
+        // kanavan kaikilta muilta samassa harjoituksissa olevilta!!
+
+        // jos true, viesti odottaa
+        if (GetRXFlag()) {
+            // Tyhjennetään puskuri (ettei sinne jäänyt edellisen viestin jämiä)
+            memset(payload,0,16);
+            // Luetaan viesti puskuriin payload
+            Receive6LoWPAN(&senderAddr, payload, 16);
+            // Tulostetaan vastaanotettu viesti konsoli-ikkunaan
+            System_printf(payload);
+            System_flush();
+        }
+    }
+}
+
 /* Task Functions */
 Void uartTaskFxn(UArg arg0, UArg arg1) {
-    // JTKJ: Exercise 4. Setup here UART connection as 9600,8n1
+    // Setup here UART connection as 9600,8n1
     char input;
     char output[80];
     int m = 0;
@@ -160,8 +207,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     }
 
     while (1) {
-        // JTKJ: Exercise 3. Print out sensor data as string to debug window if the state is correct
-        //       Remember to modify state
+        // Print out sensor data as string to debug window if the state is correct
         if(programState == DATA_READY) {
             sprintf(output, "uartTask: %f\n", ambientLight);
             //System_printf(output);
@@ -172,29 +218,6 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         sprintf(output, "Time: %.0f\n\r", systemTime);
         UART_write(uart, output, strlen(output));
 
-/*
-        if (programState == SHOW_RESULTS) {
-            for(m = 0; m < 50; m++) {
-                sprintf(output, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\r\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
-                finalDataTable[0][m] = 0;
-                finalDataTable[1][m] = 0;
-                finalDataTable[2][m] = 0;
-                finalDataTable[3][m] = 0;
-                finalDataTable[4][m] = 0;
-                finalDataTable[5][m] = 0;
-                finalDataTable[6][m] = 0;
-                UART_write(uart, output, strlen(output));
-            }
-            programState = WAITING;
-        }
-*/
-        // JTKJ: Exercise 4. Send the same sensor data string with UART
-
-        //UART_write(uart, output, strlen(output));
-
-        // Just for sanity check for exercise, you can comment this out
-        // System_printf("uartTask\n");
-        // System_flush();
 /*
         // Red led turns on/off every second if this is included
         uint_t pinValue = PIN_getOutputValue( Board_LED1 );
@@ -268,8 +291,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
        System_abort("Error Initializing I2C\n");
     }
 
-    // JTKJ: Exercise 2. Setup the OPT3001 sensor for use
-    //       Before calling the setup function, insert 100ms delay with Task_sleep
+    // Setup the OPT3001 sensor for use
+    // Before calling the setup function, insert 100ms delay with Task_sleep
     Task_sleep(100000 / Clock_tickPeriod);
     opt3001_setup(&i2c);
     
@@ -280,14 +303,13 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     while (1) {
 
         // OPT3001 DATA READ
-        /*
         if ((int)systemTime == earlierTime+1) { // OPT3001 data is read once per second
             earlierTime = (int)systemTime;
             i2c = I2C_open(Board_I2C_TMP, &i2cParams);
             if (i2c == NULL) {
                System_abort("Error Initializing I2C\n");
             }
-            // JTKJ: Exercise 2. Read sensor data and print it to the Debug window as string
+            // Read sensor data and print it to the Debug window as string
             data[n] = opt3001_get_data(&i2c);
             char merkkijono[20];
             sprintf(merkkijono, "OPT3001: %f\n", data[n]);
@@ -315,14 +337,13 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                 n++;
             }
 
-            // JTKJ: Exercise 3. Save the sensor value into the global variable
-            //       Remember to modify state
+            // Save the sensor value into the global variable
             ambientLight = data[n];
-            programState = DATA_READY;
+            //programState = DATA_READY;
 
             I2C_close(i2c);
         }
-        */
+
 
         // MPU9250 DATA READ
         if (programState == COLLECTING_DATA) {
@@ -381,37 +402,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             // Derivate calculations
             derivateCalculations(m);
 
-            /*
-            sprintf(printableData, "Raw data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, ax, ay, az, gx, gy, gz);
-            System_printf(printableData);
-            System_flush();
-            */
-            /*
-            sprintf(printableData, "Averaged data:\t%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", systemTime, cleanMPUData[0], cleanMPUData[1], cleanMPUData[2], cleanMPUData[3], cleanMPUData[4], cleanMPUData[5]);
-            System_printf(printableData);
-            System_flush();
-            */
             I2C_close(i2cMPU);
-
-            /*
-            if (m == 49) {
-                programState = SHOW_RESULTS;
-                for(m = 0; m < 50; m++) {
-                    sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
-                    finalDataTable[0][m] = 0;
-                    finalDataTable[1][m] = 0;
-                    finalDataTable[2][m] = 0;
-                    finalDataTable[3][m] = 0;
-                    finalDataTable[4][m] = 0;
-                    finalDataTable[5][m] = 0;
-                    finalDataTable[6][m] = 0;
-                    System_printf(printableData);
-                    System_flush();
-                }
-                programState = WAITING;
-                m = 0;
-            }
-            */
 
             if (m < 49) {
                 m++;
@@ -570,14 +561,13 @@ Int main(void) {
     Task_Params sensorTaskParams;
     Task_Handle uartTaskHandle;
     Task_Params uartTaskParams;
+    Task_Handle commTaskHandle;
+    Task_Params commTaskParams;
 
     // Initialize board
     Board_initGeneral();
     Init6LoWPAN();
-    
-    // JTKJ: Exercise 2. Initialize i2c bus
     Board_initI2C();
-    // JTKJ: Exercise 4. Initialize UART
     Board_initUART();
     
     // CLOCK INITIALIZATION
@@ -596,9 +586,7 @@ Int main(void) {
       System_abort("Clock create failed");
     }
 
-    // JTKJ: Exercise 1. Open the button and led pins
-    //       Remember to register the above interrupt handler for button
-    // Otetaan pinnit kÃ¤yttÃ¶Ã¶n ohjelmassa
+    // Open the button and led pins
     powerButtonHandle = PIN_open(&powerButtonState, powerButtonConfig);
     if(!powerButtonHandle) {
        System_abort("Error initializing power button\n");
@@ -611,16 +599,13 @@ Int main(void) {
     if(!buttonHandle) {
       System_abort("Error initializing button pins\n");
     }
+    if (PIN_registerIntCb(buttonHandle, &buttonFxn) != 0) {
+      System_abort("Error registering button callback function");
+    }
 
     ledHandle = PIN_open(&ledState, ledConfig);
     if(!ledHandle) {
       System_abort("Error initializing LED pins\n");
-    }
-
-    // Asetetaan painonappi-pinnille keskeytyksen kÃ¤sittelijÃ¤ksi
-    // funktio buttonFxn
-    if (PIN_registerIntCb(buttonHandle, &buttonFxn) != 0) {
-      System_abort("Error registering button callback function");
     }
 
     // Open MPU power pin
@@ -647,7 +632,17 @@ Int main(void) {
     if (uartTaskHandle == NULL) {
         System_abort("Task create failed!");
     }
-    
+
+    Task_Params_init(&commTaskParams);
+    commTaskParams.stackSize = STACKSIZE;
+    commTaskParams.stack = &commTaskStack;
+    commTaskParams.priority=1;
+    commTaskHandle = Task_create(commTask, &commTaskParams, NULL);
+    if (commTaskHandle == NULL) {
+        System_abort("Task create failed!");
+    }
+
+
     /* Sanity check */
     System_printf("Hello world!\n");
     System_flush();
