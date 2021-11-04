@@ -122,7 +122,7 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     Send6LoWPAN(DestAddr, payload, strlen(payload));
 
     // Hox! Radio aina takaisin vastaanottotilaan ao. funktiokutssulla
-    // Hox2! Tässä ei enää tarkisteta paluuarvoa.. tarkistus vain alustuksessa.
+    // Hox2! Tï¿½ssï¿½ ei enï¿½ï¿½ tarkisteta paluuarvoa.. tarkistus vain alustuksessa.
     StartReceive6LoWPAN();
     */
 
@@ -159,15 +159,15 @@ Void commTask(UArg arg0, UArg arg1) {
       System_abort("Wireless receive start failed");
     }
 
-    // Vastaanotetaan viestejä loopissa
+    // Vastaanotetaan viestejï¿½ loopissa
     while (1) {
-        // HUOM! VIESTEJÄ EI SAA LÄHETTÄÄ TÄSSÄ SILMUKASSA
-        // Viestejä lähtee niin usein, että se tukkii laitteen radion ja
+        // HUOM! VIESTEJï¿½ EI SAA Lï¿½HETTï¿½ï¿½ Tï¿½SSï¿½ SILMUKASSA
+        // Viestejï¿½ lï¿½htee niin usein, ettï¿½ se tukkii laitteen radion ja
         // kanavan kaikilta muilta samassa harjoituksissa olevilta!!
 
         // jos true, viesti odottaa
         if (GetRXFlag()) {
-            // Tyhjennetään puskuri (ettei sinne jäänyt edellisen viestin jämiä)
+            // Tyhjennetï¿½ï¿½n puskuri (ettei sinne jï¿½ï¿½nyt edellisen viestin jï¿½miï¿½)
             memset(payload,0,16);
             // Luetaan viesti puskuriin payload
             Receive6LoWPAN(&senderAddr, payload, 16);
@@ -354,6 +354,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
 
             // Get data
             mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
+
+            // TODO: USE THE FUNCTION IN liukuva_keskiarvo.c TO CLEAN THE DATA INSTEAD OF THIS MESS
 
             // Average data
             rawMPUData[0][i] = ax;
