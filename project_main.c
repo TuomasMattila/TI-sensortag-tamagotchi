@@ -356,6 +356,24 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
 
             // TODO: USE THE FUNCTION IN liukuva_keskiarvo.c TO CLEAN THE DATA INSTEAD OF THIS MESS
+            /* 1. Raaka data rawMPUData[6][50] taulukkoon
+             * 2. Kun taulukko t‰ynn‰, tee keskiarvolaskut eli
+             * movavg(rawMPUData[0], 50, 3, cleanMPUData[0]);
+             * movavg(rawMPUData[1], 50, 3, cleanMPUData[1]); jne.
+             * - Huomioitava, ett‰ t‰ytyy olla cleanMPUData[6][48], kun window_size on 3.
+             * - Yleistettyn‰: cleanMPUData taulukon koko t‰ytyy olla [6][rawMPUData-taulukon koko - window_size + 1]
+             * 3. Lasketaan derivaatat
+             * - T‰t‰ varten voi kehitell‰ samalla periaatteella toimivan funktion kuin movavg.
+             * - Funktiossa siis window_size olisi aina 2 ja keskiarvojen sijasta siell‰ laskettaisiin aina windowin derivaatta.
+             * 4. Lasketaan derivaattojen keskiarvot
+             * 5. siirret‰‰n rawMPUData-taulukon alkoita vasemmalle.
+             * 6. Otetaan uudet raa'at data arvot rawMPUData-taulukon loppuun.
+             * 7. Siirryt‰‰n vaiheeseen 2.
+             *
+             *
+             *
+             */
+
 
             // Average data
             rawMPUData[0][i] = ax;
