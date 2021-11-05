@@ -59,8 +59,9 @@ double ambientLight = -1000.0;
 float systemTime = 0.0;
 
 // Global variables for MPU9250 data
-float finalDataTable[7][50];
-float derivates[6][49];
+float rawMPUData[7][50];
+float cleanMPUData[7][48];
+float derivates[6][47];
 float averageDerivates[6];
 
 // JTKJ: Exercise 1. Add pins RTOS-variables and configuration here
@@ -92,9 +93,8 @@ PIN_Config ledConfig[] = {
    PIN_TERMINATE // Asetustaulukko lopetetaan aina tÃ¤llÃ¤ vakiolla
 };
 
-void derivateCalculations(int m);
-// TODO: in the derivateCalculations function, we should pause the prints based on the systemTime -variable, rather than this one below
-int derivateIndex = 0; // An index variable used to make sure the derivateCalculations -function does not print too often
+void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages);
+void calculateDerivates(float *array, uint8_t array_size, float *derivates);
 
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
@@ -148,30 +148,29 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     }
 }
 
-// Tiedonsiirtotaski
+// Data transfer task
 Void commTask(UArg arg0, UArg arg1) {
-    char payload[16]; // viestipuskuri
+    char payload[16]; // message buffer
     uint16_t senderAddr;
 
-    // Radio alustetaan vastaanottotilaan
+    // Initialize radio for receiving
     int32_t result = StartReceive6LoWPAN();
     if(result != true) {
       System_abort("Wireless receive start failed");
     }
 
-    // Vastaanotetaan viestejï¿½ loopissa
+    // Receive messages in a loop
     while (1) {
-        // HUOM! VIESTEJï¿½ EI SAA Lï¿½HETTï¿½ï¿½ Tï¿½SSï¿½ SILMUKASSA
-        // Viestejï¿½ lï¿½htee niin usein, ettï¿½ se tukkii laitteen radion ja
-        // kanavan kaikilta muilta samassa harjoituksissa olevilta!!
+        // NOTE: Do not send messages in this loop. It will clog the radio and
+        // others will not be able to use the channel!
 
         // jos true, viesti odottaa
         if (GetRXFlag()) {
-            // Tyhjennetï¿½ï¿½n puskuri (ettei sinne jï¿½ï¿½nyt edellisen viestin jï¿½miï¿½)
+            // Empty the message buffer
             memset(payload,0,16);
-            // Luetaan viesti puskuriin payload
+            // Read a message to the message buffer
             Receive6LoWPAN(&senderAddr, payload, 16);
-            // Tulostetaan vastaanotettu viesti konsoli-ikkunaan
+            // Print the received message to the console window
             System_printf(payload);
             System_flush();
         }
@@ -181,9 +180,7 @@ Void commTask(UArg arg0, UArg arg1) {
 /* Task Functions */
 Void uartTaskFxn(UArg arg0, UArg arg1) {
     // Setup here UART connection as 9600,8n1
-    char input;
     char output[80];
-    int m = 0;
     
     // UART-kirjaston asetukset
     UART_Handle uart;
@@ -230,27 +227,23 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
 }
 
 Void sensorTaskFxn(UArg arg0, UArg arg1) {
+    // General variables
+    char output[80] = {0};
+
     // MPU9250 variables
     float ax, ay, az, gx, gy, gz;
-	char printableData[80] = {0};
 	I2C_Handle i2cMPU; // Own i2c-interface for MPU9250 sensor
 	I2C_Params i2cMPUParams;
     I2C_Params_init(&i2cMPUParams);
     i2cMPUParams.bitRate = I2C_400kHz;
     i2cMPUParams.custom = (uintptr_t)&i2cMPUCfg;
-    float rawMPUData[6][3];
-    float cleanMPUData[6];
-    int m = 0;
-    float sum = 0.0;
+    int nextValueIndex = 0;
     int i = 0;
     int j = 0;
-    int k = 0;
-    int l = 0;
-    int isTableFull = 0;
+
     // OPT3001 variables
     I2C_Handle      i2c;
     I2C_Params      i2cParams;
-    I2C_Transaction i2cMessage;
     I2C_Params_init(&i2cParams);
     i2cParams.bitRate = I2C_400kHz;
     double data[5] = {30, 30, 30, 30, 30};
@@ -264,24 +257,18 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     if (i2cMPU == NULL) {
         System_abort("Error Initializing I2CMPU\n");
     }
-    
     // MPU power on
     PIN_setOutputValue(hMpuPin,Board_MPU_POWER, Board_MPU_POWER_ON);
-
     // Wait 100ms for the MPU sensor to power up
 	Task_sleep(100000 / Clock_tickPeriod);
     System_printf("MPU9250: Power ON\n");
     System_flush();
-
     // MPU setup and calibration
 	System_printf("MPU9250: Setup and calibration...\n");
 	System_flush();
-
 	mpu9250_setup(&i2cMPU);
-
 	System_printf("MPU9250: Setup and calibration OK\n");
 	System_flush();
-    
     I2C_close(i2cMPU);
 
 
@@ -290,12 +277,10 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     if (i2c == NULL) {
        System_abort("Error Initializing I2C\n");
     }
-
     // Setup the OPT3001 sensor for use
     // Before calling the setup function, insert 100ms delay with Task_sleep
     Task_sleep(100000 / Clock_tickPeriod);
     opt3001_setup(&i2c);
-    
     I2C_close(i2c);
 
     earlierTime = (int)systemTime;
@@ -311,9 +296,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             }
             // Read sensor data and print it to the Debug window as string
             data[n] = opt3001_get_data(&i2c);
-            char merkkijono[20];
-            sprintf(merkkijono, "OPT3001: %f\n", data[n]);
-            System_printf(merkkijono);
+            sprintf(output, "OPT3001: %f\n", data[n]);
+            System_printf(output);
             System_flush();
 
             // Check whether it has been dark enough for 5 seconds
@@ -367,87 +351,92 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
              * - Funktiossa siis window_size olisi aina 2 ja keskiarvojen sijasta siellä laskettaisiin aina windowin derivaatta.
              * 4. Lasketaan derivaattojen keskiarvot
              * 5. siirretään rawMPUData-taulukon alkoita vasemmalle.
-             * 6. Otetaan uudet raa'at data arvot rawMPUData-taulukon loppuun.
+             * 6. Otetaan uudet raa'at data arvot rawMPUData-taulukon loppuun. (vaihe 1)
              * 7. Siirrytään vaiheeseen 2.
              *
              *
              *
              */
 
+            // Raw data into an array
+            rawMPUData[0][nextValueIndex] = systemTime;
+            rawMPUData[1][nextValueIndex] = ax;
+            rawMPUData[2][nextValueIndex] = ay;
+            rawMPUData[3][nextValueIndex] = az;
+            rawMPUData[4][nextValueIndex] = gx;
+            rawMPUData[5][nextValueIndex] = gy;
+            rawMPUData[6][nextValueIndex] = gz;
 
-            // Average data
-            rawMPUData[0][i] = ax;
-            rawMPUData[1][i] = ay;
-            rawMPUData[2][i] = az;
-            rawMPUData[3][i] = gx;
-            rawMPUData[4][i] = gy;
-            rawMPUData[5][i] = gz;
-            if (i == 2) {
-                for(j = 0; j < 6; j++) {
-                    for(k = 0; k < 3; k++) {
-                        sum += rawMPUData[j][k];
+            // If the rawMPUData array is full, do some calculations
+            if (nextValueIndex == 49) {
+
+                // Moving averages
+                for (i = 0; i < 7; i++) {
+                    movavg(rawMPUData[i], 50, 3, cleanMPUData[i]);
+                }
+
+                // Derivates
+                for (i = 1; i < 7; i++) {
+                    calculateDerivates(cleanMPUData[i], 48, derivates[i-1]);
+                }
+
+                // Average derivates
+                for (i = 0; i < 6; i++) {
+                    movavg(derivates[i], 47, 47, &averageDerivates[i]);
+                }
+
+                // Shift rawMPUData values left
+                for (i = 0; i < 7; i++) {
+                    for (j = 0; j < 49; j++) {
+                        rawMPUData[i][j] = rawMPUData[i][j+1];
                     }
-                    cleanMPUData[j] = sum / 3;
-                    sum = 0;
-                }
-                for(l = 0; l < 6; l++) {
-                    rawMPUData[l][0] = rawMPUData[l][1];
-                    rawMPUData[l][1] = rawMPUData[l][2];
-                }
-            } else {
-                i++;
-            }
-
-            // Collects data continuously, when table is full, values are shifted left and the last value is placed to the end of the table
-            if (isTableFull) {
-                for(m = 0; m < 49; m++) {
-                    finalDataTable[0][m] = finalDataTable[0][m+1];
-                    finalDataTable[1][m] = finalDataTable[1][m+1];
-                    finalDataTable[2][m] = finalDataTable[2][m+1];
-                    finalDataTable[3][m] = finalDataTable[3][m+1];
-                    finalDataTable[4][m] = finalDataTable[4][m+1];
-                    finalDataTable[5][m] = finalDataTable[5][m+1];
-                    finalDataTable[6][m] = finalDataTable[6][m+1];
                 }
             }
 
-            finalDataTable[0][m] = systemTime;
-            finalDataTable[1][m] = cleanMPUData[0];
-            finalDataTable[2][m] = cleanMPUData[1];
-            finalDataTable[3][m] = cleanMPUData[2];
-            finalDataTable[4][m] = cleanMPUData[3];
-            finalDataTable[5][m] = cleanMPUData[4];
-            finalDataTable[6][m] = cleanMPUData[5];
-
-            // Derivate calculations
-            derivateCalculations(m);
+            if (nextValueIndex < 49) {
+                nextValueIndex++;
+            }
 
             I2C_close(i2cMPU);
-
-            if (m < 49) {
-                m++;
-            } else {
-                isTableFull = 1;
-            }
-
         }
 
-        if (programState == SHOW_RESULTS) {
-            for(m = 0; m < 50; m++) {
-                sprintf(printableData, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", finalDataTable[0][m], finalDataTable[1][m], finalDataTable[2][m], finalDataTable[3][m], finalDataTable[4][m], finalDataTable[5][m], finalDataTable[6][m]);
-                finalDataTable[0][m] = 0;
-                finalDataTable[1][m] = 0;
-                finalDataTable[2][m] = 0;
-                finalDataTable[3][m] = 0;
-                finalDataTable[4][m] = 0;
-                finalDataTable[5][m] = 0;
-                finalDataTable[6][m] = 0;
-                System_printf(printableData);
+        // Print the data collected from the last 5 seconds
+        if (programState == SHOW_RESULTS && nextValueIndex == 49) {
+            System_printf("rawMPUData:\n");
+            System_flush();
+            for (i = 0; i < 50; i++) {
+                sprintf(output, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", rawMPUData[0][i], rawMPUData[1][i], rawMPUData[2][i], rawMPUData[3][i], rawMPUData[4][i], rawMPUData[5][i], rawMPUData[6][i]);
+                System_printf(output);
                 System_flush();
             }
+            System_printf("cleanMPUData:\n");
+            System_flush();
+            for (i = 0; i < 48; i++) {
+                sprintf(output, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", cleanMPUData[0][i], cleanMPUData[1][i], cleanMPUData[2][i], cleanMPUData[3][i], cleanMPUData[4][i], cleanMPUData[5][i], cleanMPUData[6][i]);
+                System_printf(output);
+                System_flush();
+            }
+            System_printf("derivates:\n");
+            System_flush();
+            for (i = 0; i < 47; i++) {
+                sprintf(output, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", derivates[0][i], derivates[1][i], derivates[2][i], derivates[3][i], derivates[4][i], derivates[5][i]);
+                System_printf(output);
+                System_flush();
+            }
+            System_printf("averageDerivates:\n");
+            System_flush();
+            sprintf(output, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", averageDerivates[0], averageDerivates[1], averageDerivates[2], averageDerivates[3], averageDerivates[4], averageDerivates[5]);
+            System_printf(output);
+            System_flush();
             programState = WAITING;
-            m = 0;
-            isTableFull = 0;
+            nextValueIndex = 0;
+        }
+
+        // Prevent data printing if the button was pressed before enough data was gathered
+        if (programState == SHOW_RESULTS && nextValueIndex < 49) {
+            System_printf("Cannot show results yet, not enough data\n");
+            System_flush();
+            programState = COLLECTING_DATA;
         }
 
         // Once per 100ms, you can modify this
@@ -455,118 +444,43 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     }
 }
 
-/* This function calculates the speed at which the MPU-sensor's values change,
- * a.k.a. it calculates derivates between two most recent values. This function should be
- * called everytime a value is added to the finalDataTable.
- *      Then, if the table is full, the function calculates the average derivate for each
- * axis. Practically this means that the function calculates what the average derivate
- * was during the last 5 seconds. If the average is over 3, the function prints a debug
- * string indicating which axis it was.
- *      For this function to work, you will need these global variables (for now):
- * - float finalDataTable[7][50];
- * - float derivates[6][49];
- * - float averageDerivates[6];
- * - int derivateIndex = 0;
- *
- */
-void derivateCalculations(int m) {
-    char output[80];
+/* Used for calculating moving average for an array of float numbers.
+ * Parameters:
+ * - float *array: Original array.
+ * - uint8_t array_size: Size of the original array.
+ * - uint8_t window_size: How many numbers' average is calculated.
+ * - float *averages: The array were the averaged values are stored.
+ *                    Note that the size of this array should be at least
+ *                    array_size - window_size + 1
+*/
+void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages) {
+    float temp = 0;
+    int i = 0;
+    int j = 0;
 
-    // calculate derivates
-    if (m > 0) {
-        derivates[0][m-1] = fabs(finalDataTable[1][m] - finalDataTable[1][m-1]) / 0.1;
-        derivates[1][m-1] = fabs(finalDataTable[2][m] - finalDataTable[2][m-1]) / 0.1;
-        derivates[2][m-1] = fabs(finalDataTable[3][m] - finalDataTable[3][m-1]) / 0.1;
-        derivates[3][m-1] = fabs(finalDataTable[4][m] - finalDataTable[4][m-1]) / 0.1;
-        derivates[4][m-1] = fabs(finalDataTable[5][m] - finalDataTable[5][m-1]) / 0.1;
-        derivates[5][m-1] = fabs(finalDataTable[6][m] - finalDataTable[6][m-1]) / 0.1;
+    for(i = 0; i <= array_size - window_size; i++){
+        for(j = 0, temp = 0; j < window_size; j++) {
+            temp += array[i+j];
+        }
+        averages[i] = temp / window_size;
     }
+}
 
-    // if table is full, calculate average derivates
-    if (m == 49 && derivateIndex == 49) {
-        // Calculate sums of the derivate values
-        for(m = 0; m < 49; m++) {
-            averageDerivates[0] += derivates[0][m];
-            averageDerivates[1] += derivates[1][m];
-            averageDerivates[2] += derivates[2][m];
-            averageDerivates[3] += derivates[3][m];
-            averageDerivates[4] += derivates[4][m];
-            averageDerivates[5] += derivates[5][m];
-        }
-        // Shift values left to make room for the next value
-        for(m = 0; m < 48; m++) {
-            derivates[0][m] = derivates[0][m+1];
-            derivates[1][m] = derivates[1][m+1];
-            derivates[2][m] = derivates[2][m+1];
-            derivates[3][m] = derivates[3][m+1];
-            derivates[4][m] = derivates[4][m+1];
-            derivates[5][m] = derivates[5][m+1];
-        }
-        // Calculate average for each axis' derivates
-        averageDerivates[0] = averageDerivates[0] / 49;
-        averageDerivates[1] = averageDerivates[1] / 49;
-        averageDerivates[2] = averageDerivates[2] / 49;
-        averageDerivates[3] = averageDerivates[3] / 49;
-        averageDerivates[4] = averageDerivates[4] / 49;
-        averageDerivates[5] = averageDerivates[5] / 49;
+/* Used for calculating the difference between each two consecutive
+ * values in an array of floats, a.k.a. derivates.
+ * Parameters:
+ * - float *array: Original array.
+ * - uint8_t array_size: Size of the original array.
+ * - float *derivates: Array where the derivates are stored.
+ *                     Note that the size of this array must be
+ *                     at least array_size - 1
+*/
+void calculateDerivates(float *array, uint8_t array_size, float *derivates) {
+    int i = 0;
 
-        // If average derivate is over 3, print debug info and zero all values
-        if (averageDerivates[0] > 3) {
-            sprintf(output, "X-axis motion (averageDerivates[0]: %.2f)\n", averageDerivates[0]);
-            System_printf(output);
-            System_flush();
-            for(m = 0; m < 49; m++) {
-                derivates[0][m] = 0;
-                derivates[1][m] = 0;
-                derivates[2][m] = 0;
-                derivates[3][m] = 0;
-                derivates[4][m] = 0;
-                derivates[5][m] = 0;
-            }
-            derivateIndex = 0;
-        }
-        if (averageDerivates[1] > 3) {
-            sprintf(output, "Y-axis motion (averageDerivates[1]: %.2f)\n", averageDerivates[1]);
-            System_printf(output);
-            System_flush();
-            for(m = 0; m < 49; m++) {
-                derivates[0][m] = 0;
-                derivates[1][m] = 0;
-                derivates[2][m] = 0;
-                derivates[3][m] = 0;
-                derivates[4][m] = 0;
-                derivates[5][m] = 0;
-            }
-            derivateIndex = 0;
-        }
-        if (averageDerivates[2] > 3) {
-            sprintf(output, "Z-axis motion (averageDerivates[2]: %.2f)\n", averageDerivates[2]);
-            System_printf(output);
-            System_flush();
-            for(m = 0; m < 49; m++) {
-                derivates[0][m] = 0;
-                derivates[1][m] = 0;
-                derivates[2][m] = 0;
-                derivates[3][m] = 0;
-                derivates[4][m] = 0;
-                derivates[5][m] = 0;
-            }
-            derivateIndex = 0;
-        }
-
-        // Zero all average values after each call
-        averageDerivates[0] = 0;
-        averageDerivates[1] = 0;
-        averageDerivates[2] = 0;
-        averageDerivates[3] = 0;
-        averageDerivates[4] = 0;
-        averageDerivates[5] = 0;
+    for(i = 0; i <= array_size - 2; i++){
+        derivates[i] = fabs(array[i+1] - array[i]) / 0.1;
     }
-
-    if (derivateIndex < 49) {
-        derivateIndex++;
-    }
-
 }
 
 // Kellokeskeytyksen kÃ¤sittelijÃ¤
@@ -594,12 +508,10 @@ Int main(void) {
     // RTOS's clock variables
     Clock_Handle clkHandle;
     Clock_Params clkParams;
-    
     // Init clock
     Clock_Params_init(&clkParams);
     clkParams.period = 1000000 / Clock_tickPeriod;
     clkParams.startFlag = TRUE;
-    
     // Start using clock
     clkHandle = Clock_create((Clock_FuncPtr)clkFxn, 1000000 / Clock_tickPeriod, &clkParams, NULL);
     if (clkHandle == NULL) {
@@ -661,7 +573,6 @@ Int main(void) {
     if (commTaskHandle == NULL) {
         System_abort("Task create failed!");
     }
-
 
     /* Sanity check */
     System_printf("Hello world!\n");
