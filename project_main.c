@@ -48,11 +48,11 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
     .pinSCL = Board_I2C0_SCL1
 };
 
-// JTKJ: Exercise 3. Definition of the state machine
+// Definition of the state machine
 enum state { WAITING=1, DATA_READY, COLLECTING_DATA, SHOW_RESULTS };
 enum state programState = WAITING;
 
-// JTKJ: Exercise 3. Global variable for ambient light
+// Global variable for ambient light
 double ambientLight = -1000.0;
 
 // Global variable for system time
@@ -64,7 +64,7 @@ float cleanMPUData[7][48];
 float derivates[6][47];
 float averageDerivates[6];
 
-// JTKJ: Exercise 1. Add pins RTOS-variables and configuration here
+// Pins' RTOS-variables and configuration
 static PIN_Handle powerButtonHandle;
 static PIN_State powerButtonState;
 static PIN_Handle buttonHandle;
@@ -72,7 +72,7 @@ static PIN_State buttonState;
 static PIN_Handle ledHandle;
 static PIN_State ledState;
 
-// POWER BUTTON
+// Power button
 PIN_Config powerButtonConfig[] = {
    Board_BUTTON1 | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_NEGEDGE,
    PIN_TERMINATE
@@ -82,19 +82,23 @@ PIN_Config powerButtonWakeConfig[] = {
    PIN_TERMINATE
 };
 
-// OTHER BUTTON
+// Other button
 PIN_Config buttonConfig[] = {
    Board_BUTTON0  | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_NEGEDGE, 
    PIN_TERMINATE // Asetustaulukko lopetetaan aina t√§ll√§ vakiolla
 };
 
+// Red led
 PIN_Config ledConfig[] = {
    Board_LED1 | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX, 
    PIN_TERMINATE // Asetustaulukko lopetetaan aina t√§ll√§ vakiolla
 };
 
+// Calculation functions
 void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages);
 void calculateDerivates(float *array, uint8_t array_size, float *derivates);
+int checkAverageDerivates(float *averageDerivates);
+
 
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
@@ -113,6 +117,7 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
     PINCC26XX_setWakeup(powerButtonWakeConfig);
     Power_shutdown(NULL,0);
 }
+
 
 void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     /*
@@ -148,6 +153,7 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     }
 }
 
+
 // Data transfer task
 Void commTask(UArg arg0, UArg arg1) {
     char payload[16]; // message buffer
@@ -177,7 +183,7 @@ Void commTask(UArg arg0, UArg arg1) {
     }
 }
 
-/* Task Functions */
+
 Void uartTaskFxn(UArg arg0, UArg arg1) {
     // Setup here UART connection as 9600,8n1
     char output[80];
@@ -226,9 +232,12 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     }
 }
 
+
 Void sensorTaskFxn(UArg arg0, UArg arg1) {
     // General variables
     char output[80] = {0};
+    int i = 0;
+    int j = 0;
 
     // MPU9250 variables
     float ax, ay, az, gx, gy, gz;
@@ -237,9 +246,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     I2C_Params_init(&i2cMPUParams);
     i2cMPUParams.bitRate = I2C_400kHz;
     i2cMPUParams.custom = (uintptr_t)&i2cMPUCfg;
-    int nextValueIndex = 0;
-    int i = 0;
-    int j = 0;
+    int MPUindex = 0;
 
     // OPT3001 variables
     I2C_Handle      i2c;
@@ -248,8 +255,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     i2cParams.bitRate = I2C_400kHz;
     double data[5] = {30, 30, 30, 30, 30};
     int earlierTime = 0;
-    int n = 0;
-    int o = 0;
+    int OPTindex = 0;
     int isDarkEnough = 0;
 
     // MPU9250 -SENSOR INITIALIZATION
@@ -295,18 +301,18 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                System_abort("Error Initializing I2C\n");
             }
             // Read sensor data and print it to the Debug window as string
-            data[n] = opt3001_get_data(&i2c);
-            sprintf(output, "OPT3001: %f\n", data[n]);
+            data[OPTindex] = opt3001_get_data(&i2c);
+            sprintf(output, "OPT3001: %f\n", data[OPTindex]);
             System_printf(output);
             System_flush();
 
             // Check whether it has been dark enough for 5 seconds
-            if (n == 4) {
-                for(o = 0; o < 5; o++) {
-                    if(data[o] > 5) {
+            if (OPTindex == 4) {
+                for(i = 0; i < 5; i++) {
+                    if(data[i] > 5) {
                         isDarkEnough = 0;
                         break;
-                    } else if (o == 4){
+                    } else if (i == 4){
                         isDarkEnough = 1;
                     }
                 }
@@ -314,20 +320,19 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                     System_printf("Sleeping... ");
                     System_flush();
                 }
-                for(o = 0; o < 4; o++) {
-                    data[o] = data[o+1];
+                for(i = 0; i < 4; i++) {
+                    data[i] = data[i+1];
                 }
             } else {
-                n++;
+                OPTindex++;
             }
 
             // Save the sensor value into the global variable
-            ambientLight = data[n];
+            ambientLight = data[OPTindex];
             //programState = DATA_READY;
 
             I2C_close(i2c);
         }
-
 
         // MPU9250 DATA READ
         if (programState == COLLECTING_DATA) {
@@ -339,36 +344,17 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             // Get data
             mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
 
-            // TODO: USE THE FUNCTION IN liukuva_keskiarvo.c TO CLEAN THE DATA INSTEAD OF THIS MESS
-            /* 1. Raaka data rawMPUData[6][50] taulukkoon
-             * 2. Kun taulukko t‰ynn‰, tee keskiarvolaskut eli
-             * movavg(rawMPUData[0], 50, 3, cleanMPUData[0]);
-             * movavg(rawMPUData[1], 50, 3, cleanMPUData[1]); jne.
-             * - Huomioitava, ett‰ t‰ytyy olla cleanMPUData[6][48], kun window_size on 3.
-             * - Yleistettyn‰: cleanMPUData taulukon koko t‰ytyy olla [6][rawMPUData-taulukon koko - window_size + 1]
-             * 3. Lasketaan derivaatat
-             * - T‰t‰ varten voi kehitell‰ samalla periaatteella toimivan funktion kuin movavg.
-             * - Funktiossa siis window_size olisi aina 2 ja keskiarvojen sijasta siell‰ laskettaisiin aina windowin derivaatta.
-             * 4. Lasketaan derivaattojen keskiarvot
-             * 5. siirret‰‰n rawMPUData-taulukon alkoita vasemmalle.
-             * 6. Otetaan uudet raa'at data arvot rawMPUData-taulukon loppuun. (vaihe 1)
-             * 7. Siirryt‰‰n vaiheeseen 2.
-             *
-             *
-             *
-             */
-
             // Raw data into an array
-            rawMPUData[0][nextValueIndex] = systemTime;
-            rawMPUData[1][nextValueIndex] = ax;
-            rawMPUData[2][nextValueIndex] = ay;
-            rawMPUData[3][nextValueIndex] = az;
-            rawMPUData[4][nextValueIndex] = gx;
-            rawMPUData[5][nextValueIndex] = gy;
-            rawMPUData[6][nextValueIndex] = gz;
+            rawMPUData[0][MPUindex] = systemTime;
+            rawMPUData[1][MPUindex] = ax;
+            rawMPUData[2][MPUindex] = ay;
+            rawMPUData[3][MPUindex] = az;
+            rawMPUData[4][MPUindex] = gx;
+            rawMPUData[5][MPUindex] = gy;
+            rawMPUData[6][MPUindex] = gz;
 
             // If the rawMPUData array is full, do some calculations
-            if (nextValueIndex == 49) {
+            if (MPUindex == 49) {
 
                 // Moving averages
                 for (i = 0; i < 7; i++) {
@@ -385,23 +371,29 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                     movavg(derivates[i], 47, 47, &averageDerivates[i]);
                 }
 
-                // Shift rawMPUData values left
-                for (i = 0; i < 7; i++) {
-                    for (j = 0; j < 49; j++) {
-                        rawMPUData[i][j] = rawMPUData[i][j+1];
+                // If an average derivate was big enough, 'restart' data collection
+                if (checkAverageDerivates(averageDerivates)) {
+                    MPUindex = -1;
+                } else {
+                    // If no average derivate was big enough, shift rawMPUData values left and continue data collection
+                    for (i = 0; i < 7; i++) {
+                        for (j = 0; j < 49; j++) {
+                            rawMPUData[i][j] = rawMPUData[i][j+1];
+                        }
                     }
                 }
+
             }
 
-            if (nextValueIndex < 49) {
-                nextValueIndex++;
+            if (MPUindex < 49) {
+                MPUindex++;
             }
 
             I2C_close(i2cMPU);
         }
 
         // Print the data collected from the last 5 seconds
-        if (programState == SHOW_RESULTS && nextValueIndex == 49) {
+        if (programState == SHOW_RESULTS && MPUindex == 49) {
             System_printf("rawMPUData:\n");
             System_flush();
             for (i = 0; i < 50; i++) {
@@ -429,11 +421,11 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             System_printf(output);
             System_flush();
             programState = WAITING;
-            nextValueIndex = 0;
+            MPUindex = 0;
         }
 
         // Prevent data printing if the button was pressed before enough data was gathered
-        if (programState == SHOW_RESULTS && nextValueIndex < 49) {
+        if (programState == SHOW_RESULTS && MPUindex < 49) {
             System_printf("Cannot show results yet, not enough data\n");
             System_flush();
             programState = COLLECTING_DATA;
@@ -444,6 +436,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     }
 }
 
+
 /* Used for calculating moving average for an array of float numbers.
  * Parameters:
  * - float *array: Original array.
@@ -451,7 +444,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
  * - uint8_t window_size: How many numbers' average is calculated.
  * - float *averages: The array were the averaged values are stored.
  *                    Note that the size of this array should be at least
- *                    array_size - window_size + 1
+ *                    array_size - window_size + 1.
 */
 void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages) {
     float temp = 0;
@@ -466,6 +459,7 @@ void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averag
     }
 }
 
+
 /* Used for calculating the difference between each two consecutive
  * values in an array of floats, a.k.a. derivates.
  * Parameters:
@@ -473,7 +467,8 @@ void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averag
  * - uint8_t array_size: Size of the original array.
  * - float *derivates: Array where the derivates are stored.
  *                     Note that the size of this array must be
- *                     at least array_size - 1
+ *                     at least array_size - 1.
+ *
 */
 void calculateDerivates(float *array, uint8_t array_size, float *derivates) {
     int i = 0;
@@ -483,10 +478,44 @@ void calculateDerivates(float *array, uint8_t array_size, float *derivates) {
     }
 }
 
+
+/* If any average derivate is big enough, this prints which one of the
+ * axes it was and how big was the average derivate value.
+ * Parameters:
+ * - float *averageDerivates: Array containing the average derivate values.
+ * Returns:
+ * - 1 if any of the average derivates is big enough, 0 otherwise.
+ */
+int checkAverageDerivates(float *averageDerivates) {
+    char output[60];
+    if (averageDerivates[0] > 3) {
+        sprintf(output, "X-axis movement (average derivate: %.2f)\n", averageDerivates[0]);
+        System_printf(output);
+        System_flush();
+    }
+    if (averageDerivates[1] > 3) {
+        sprintf(output, "Y-axis movement (average derivate: %.2f)\n", averageDerivates[1]);
+        System_printf(output);
+        System_flush();
+    }
+    if (averageDerivates[2] > 3) {
+        sprintf(output, "Z-axis movement (average derivate: %.2f)\n", averageDerivates[2]);
+        System_printf(output);
+        System_flush();
+    }
+    if (averageDerivates[0] > 3 || averageDerivates[1] > 3 || averageDerivates[2] > 3) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+
 // Kellokeskeytyksen k√§sittelij√§
 Void clkFxn(UArg arg0) {
    systemTime = (float)Clock_getTicks() / 100000.0;
 }
+
 
 Int main(void) {
 
