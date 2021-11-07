@@ -74,24 +74,26 @@ static PIN_State ledState;
 
 // Power button
 PIN_Config powerButtonConfig[] = {
-   Board_BUTTON1 | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_NEGEDGE,
+   Board_BUTTON1 | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_BOTHEDGES,
    PIN_TERMINATE
 };
 PIN_Config powerButtonWakeConfig[] = {
    Board_BUTTON1 | PIN_INPUT_EN | PIN_PULLUP | PINCC26XX_WAKEUP_NEGEDGE,
    PIN_TERMINATE
 };
+float powerButtonWasPushed = 0.0;
 
 // Other button
 PIN_Config buttonConfig[] = {
-   Board_BUTTON0  | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_NEGEDGE, 
-   PIN_TERMINATE // Asetustaulukko lopetetaan aina tällä vakiolla
+   Board_BUTTON0  | PIN_INPUT_EN | PIN_PULLUP | PIN_IRQ_BOTHEDGES,
+   PIN_TERMINATE
 };
+float buttonWasPushed = 0.0;
 
 // Red led
 PIN_Config ledConfig[] = {
    Board_LED1 | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX, 
-   PIN_TERMINATE // Asetustaulukko lopetetaan aina tällä vakiolla
+   PIN_TERMINATE
 };
 
 // Calculation functions
@@ -101,21 +103,27 @@ int checkAverageDerivates(float *averageDerivates);
 
 
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
-
-    // Turn off screen:
-    // Display_clear(displayHandle);
-    // Display_close(displayHandle);
-
-    System_printf("Power button was pressed.");
-    System_flush();
-
-    // Sleep for 100ms...
-    Task_sleep(100000 / Clock_tickPeriod);
-
-    // Taikamenot
-    PIN_close(powerButtonHandle);
-    PINCC26XX_setWakeup(powerButtonWakeConfig);
-    Power_shutdown(NULL,0);
+    if (!PIN_getInputValue(pinId)) {
+        powerButtonWasPushed = systemTime;
+    } else if (PIN_getInputValue(pinId)) {
+        // Long push
+        if (systemTime >= powerButtonWasPushed + 5) {
+            System_printf("Long power button push\n");
+            System_flush();
+            System_printf("Shutting down...\n");
+            System_flush();
+            // Sleep for 100ms...
+            Task_sleep(100000 / Clock_tickPeriod);
+            // Taikamenot
+            PIN_close(powerButtonHandle);
+            PINCC26XX_setWakeup(powerButtonWakeConfig);
+            Power_shutdown(NULL,0);
+        // Short push
+        } else if (systemTime > 1) {
+            System_printf("Short power button push\n");
+            System_flush();
+        }
+    }
 }
 
 
@@ -139,17 +147,32 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     PIN_setOutputValue( ledHandle, Board_LED1, pinValue );
     */
 
-    // Change program state
-    System_printf("Button was pressed\n");
-    System_flush();
-    if (programState == WAITING) {
-        programState = COLLECTING_DATA;
-        System_printf("programState: COLLECTING_DATA\n");
-        System_flush();
-    } else if (programState == COLLECTING_DATA) {
-        programState = SHOW_RESULTS;
-        System_printf("programState: SHOW_RESULTS\n");
-        System_flush();
+    // If button is pushed down
+    if (!PIN_getInputValue(pinId)) {
+        buttonWasPushed = systemTime;
+    // If button is released
+    } else if (PIN_getInputValue(pinId)) {
+        // Long push
+        if (systemTime >= buttonWasPushed + 5) {
+            System_printf("Long button push\n");
+            System_flush();
+            System_printf("Feeding...\n");
+            System_flush();
+        // Short push
+        } else if (systemTime > 1) {
+            // Change program state
+            System_printf("Short button push\n");
+            System_flush();
+            if (programState == WAITING) {
+                programState = COLLECTING_DATA;
+                System_printf("programState: COLLECTING_DATA\n");
+                System_flush();
+            } else if (programState == COLLECTING_DATA) {
+                programState = SHOW_RESULTS;
+                System_printf("programState: SHOW_RESULTS\n");
+                System_flush();
+            }
+        }
     }
 }
 
@@ -170,7 +193,7 @@ Void commTask(UArg arg0, UArg arg1) {
         // NOTE: Do not send messages in this loop. It will clog the radio and
         // others will not be able to use the channel!
 
-        // jos true, viesti odottaa
+        // If true, there is a message waiting
         if (GetRXFlag()) {
             // Empty the message buffer
             memset(payload,0,16);
@@ -184,11 +207,11 @@ Void commTask(UArg arg0, UArg arg1) {
 }
 
 
+// UART task
 Void uartTaskFxn(UArg arg0, UArg arg1) {
-    // Setup here UART connection as 9600,8n1
     char output[80];
     
-    // UART-kirjaston asetukset
+    // UART-library settings
     UART_Handle uart;
     UART_Params uartParams;
     
@@ -198,12 +221,12 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     uartParams.readDataMode = UART_DATA_TEXT;
     uartParams.readEcho = UART_ECHO_OFF;
     uartParams.readMode=UART_MODE_BLOCKING;
-    uartParams.baudRate = 57600; // nopeus 9600baud
+    uartParams.baudRate = 57600; // nopeus 57600baud
     uartParams.dataLength = UART_LEN_8; // 8
     uartParams.parityType = UART_PAR_NONE; // n
     uartParams.stopBits = UART_STOP_ONE; // 1
     
-    // Avataan yhteys laitteen sarjaporttiin vakiossa Board_UART0
+    // Open the connection to the serial port of the device in the constant Board_UART0
     uart = UART_open(Board_UART0, &uartParams);
     if (uart == NULL) {
       System_abort("Error opening the UART");
@@ -233,6 +256,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
 }
 
 
+// Sensor task
 Void sensorTaskFxn(UArg arg0, UArg arg1) {
     // General variables
     char output[80] = {0};
@@ -303,7 +327,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             // Read sensor data and print it to the Debug window as string
             data[OPTindex] = opt3001_get_data(&i2c);
             sprintf(output, "OPT3001: %f\n", data[OPTindex]);
-            System_printf(output);
+            //System_printf(output);
             System_flush();
 
             // Check whether it has been dark enough for 5 seconds
@@ -317,7 +341,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                     }
                 }
                 if (isDarkEnough) {
-                    System_printf("Sleeping... ");
+                    System_printf("Sleeping...\n");
                     System_flush();
                 }
                 for(i = 0; i < 4; i++) {
@@ -511,7 +535,7 @@ int checkAverageDerivates(float *averageDerivates) {
 }
 
 
-// Kellokeskeytyksen käsittelijä
+// Clock function
 Void clkFxn(UArg arg0) {
    systemTime = (float)Clock_getTicks() / 100000.0;
 }
