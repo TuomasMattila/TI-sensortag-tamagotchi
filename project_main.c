@@ -24,6 +24,7 @@
 #include "wireless/comm_lib.h"
 #include "sensors/opt3001.h"
 #include "sensors/mpu9250.h"
+#include "buzzer.h"
 
 /* Task */
 #define STACKSIZE 2048
@@ -71,6 +72,8 @@ static PIN_Handle buttonHandle;
 static PIN_State buttonState;
 static PIN_Handle ledHandle;
 static PIN_State ledState;
+static PIN_Handle buzzerHandle;
+static PIN_State buzzerState;
 
 // Power button
 PIN_Config powerButtonConfig[] = {
@@ -93,6 +96,12 @@ float buttonWasPushed = 0.0;
 // Red led
 PIN_Config ledConfig[] = {
    Board_LED1 | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX, 
+   PIN_TERMINATE
+};
+
+// Buzzer
+PIN_Config buzzerConfig[] = {
+   Board_BUZZER | PIN_GPIO_OUTPUT_EN | PIN_GPIO_LOW | PIN_PUSHPULL | PIN_DRVSTR_MAX,
    PIN_TERMINATE
 };
 
@@ -122,6 +131,10 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
         } else if (systemTime > 1) {
             System_printf("Short power button push\n");
             System_flush();
+            buzzerOpen(buzzerHandle);
+            buzzerSetFrequency(3000);
+            Task_sleep(500000 / Clock_tickPeriod);
+            buzzerClose();
         }
     }
 }
@@ -573,7 +586,7 @@ Int main(void) {
 
     // Open the button and led pins
     powerButtonHandle = PIN_open(&powerButtonState, powerButtonConfig);
-    if(!powerButtonHandle) {
+    if (!powerButtonHandle) {
        System_abort("Error initializing power button\n");
     }
     if (PIN_registerIntCb(powerButtonHandle, &powerFxn) != 0) {
@@ -581,7 +594,7 @@ Int main(void) {
     }
 
     buttonHandle = PIN_open(&buttonState, buttonConfig);
-    if(!buttonHandle) {
+    if (!buttonHandle) {
       System_abort("Error initializing button pins\n");
     }
     if (PIN_registerIntCb(buttonHandle, &buttonFxn) != 0) {
@@ -589,8 +602,14 @@ Int main(void) {
     }
 
     ledHandle = PIN_open(&ledState, ledConfig);
-    if(!ledHandle) {
+    if (!ledHandle) {
       System_abort("Error initializing LED pins\n");
+    }
+
+    // Open buzzer pin
+    buzzerHandle = PIN_open(&buzzerState, buzzerConfig);
+    if (buzzerHandle == NULL) {
+        System_abort("Error initializing buzzer pin\n");
     }
 
     // Open MPU power pin
