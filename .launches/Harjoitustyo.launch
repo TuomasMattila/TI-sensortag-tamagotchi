@@ -4,7 +4,7 @@
 <stringAttribute key="com.ti.ccstudio.debug.debugModel.ATTR_PROGRAM.CC2650F128.ccxml.Texas Instruments XDS110 USB Debug Probe/Cortex_M3_0" value="${build_artifact:Harjoitustyo}"/>
 <stringAttribute key="com.ti.ccstudio.debug.debugModel.ATTR_PROJECT.CC2650F128.ccxml.Texas Instruments XDS110 USB Debug Probe/Cortex_M3_0" value="Harjoitustyo"/>
 <stringAttribute key="com.ti.ccstudio.debug.debugModel.ATTR_TARGET_CONFIG" value="${target_config_active_default:Harjoitustyo}"/>
-<stringAttribute key="com.ti.ccstudio.debug.debugModel.MRU_PROGRAM.CC2650F128.ccxml.Texas Instruments XDS110 USB Debug Probe/Cortex_M3_0" value="C:\Users\Tuomas\Documents\Opiskelu_repot\johdatus_tietokonejarjestelmiin\Harjoitustyo\Debug\Harjoitustyo.out"/>
+<stringAttribute key="com.ti.ccstudio.debug.debugModel.MRU_PROGRAM.CC2650F128.ccxml.Texas Instruments XDS110 USB Debug Probe/Cortex_M3_0" value="C:\Users\tuoma\Documents\Opiskelu_repot\Johdatus_tietokonejarjestelmiin\Jtkj-harjoitustyo\Debug\Harjoitustyo.out"/>
 <listAttribute key="org.eclipse.debug.core.MAPPED_RESOURCE_PATHS">
 <listEntry value="/Harjoitustyo"/>
 </listAttribute>

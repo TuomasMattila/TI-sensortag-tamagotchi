@@ -50,8 +50,11 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 };
 
 // Definition of the state machine
-enum state { WAITING=1, DATA_READY, COLLECTING_DATA, SHOW_RESULTS };
+enum state { WAITING=1, DATA_READY, COLLECTING_DATA, SHOW_RESULTS, FEED, SLEEP, EXERCISE, PET };
 enum state programState = WAITING;
+enum state petState = WAITING;
+float startedSleeping = 0.0;
+float startedExercise  = 0.0;
 
 // Global variable for ambient light
 double ambientLight = -1000.0;
@@ -109,14 +112,22 @@ PIN_Config buzzerConfig[] = {
 void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages);
 void calculateDerivates(float *array, uint8_t array_size, float *derivates);
 int checkAverageDerivates(float *averageDerivates);
+void playBuzzer();
 
+// TODO: We might have to give up on the feature that prevents some actions from happening simultaneously.
+//       It makes the code harder to read and even in the exercise instructions they mention that the program
+//       has to be able to send multiple 'commands' at once. TLDR: Remove everything that prevents actions
+//       from happening simultaneously, for now at least.
 
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
+
+    // If button is pushed down
     if (!PIN_getInputValue(pinId)) {
         powerButtonWasPushed = systemTime;
+    // If button is released
     } else if (PIN_getInputValue(pinId)) {
         // Long push
-        if (systemTime >= powerButtonWasPushed + 5) {
+        if (systemTime >= powerButtonWasPushed + 2) {
             System_printf("Long power button push\n");
             System_flush();
             System_printf("Shutting down...\n");
@@ -131,10 +142,6 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
         } else if (systemTime > 1) {
             System_printf("Short power button push\n");
             System_flush();
-            buzzerOpen(buzzerHandle);
-            buzzerSetFrequency(3000);
-            Task_sleep(500000 / Clock_tickPeriod);
-            buzzerClose();
         }
     }
 }
@@ -166,11 +173,17 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     // If button is released
     } else if (PIN_getInputValue(pinId)) {
         // Long push
-        if (systemTime >= buttonWasPushed + 5) {
+        if (systemTime >= buttonWasPushed + 1) {
             System_printf("Long button push\n");
             System_flush();
-            System_printf("Feeding...\n");
-            System_flush();
+            if (petState == WAITING && systemTime >= startedSleeping + 5) {
+                System_printf("Feeding...\n");
+                System_flush();
+                petState = FEED;
+            } else if (systemTime <= startedSleeping + 5) {
+                System_printf("The pet cannot be fed while it is asleep...\n");
+                System_flush();
+            }
         // Short push
         } else if (systemTime > 1) {
             // Change program state
@@ -290,7 +303,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     I2C_Params      i2cParams;
     I2C_Params_init(&i2cParams);
     i2cParams.bitRate = I2C_400kHz;
-    double data[5] = {30, 30, 30, 30, 30};
+    double OPTdata[5] = {0};
     int earlierTime = 0;
     int OPTindex = 0;
     int isDarkEnough = 0;
@@ -338,15 +351,17 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                System_abort("Error Initializing I2C\n");
             }
             // Read sensor data and print it to the Debug window as string
-            data[OPTindex] = opt3001_get_data(&i2c);
-            sprintf(output, "OPT3001: %f\n", data[OPTindex]);
-            //System_printf(output);
+            OPTdata[OPTindex] = opt3001_get_data(&i2c);
+            /*
+            sprintf(output, "OPT3001: %f\n", OPTdata[OPTindex]);
+            System_printf(output);
             System_flush();
+            */
 
             // Check whether it has been dark enough for 5 seconds
             if (OPTindex == 4) {
                 for(i = 0; i < 5; i++) {
-                    if(data[i] > 5) {
+                    if(OPTdata[i] > 5) {
                         isDarkEnough = 0;
                         break;
                     } else if (i == 4){
@@ -354,18 +369,29 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                     }
                 }
                 if (isDarkEnough) {
-                    System_printf("Sleeping...\n");
-                    System_flush();
-                }
-                for(i = 0; i < 4; i++) {
-                    data[i] = data[i+1];
+                    if (systemTime >= startedExercise + 5) {
+                        System_printf("Sleeping...\n");
+                        System_flush();
+                        petState = SLEEP;
+                        startedSleeping = systemTime;
+                        memset(OPTdata, 0, 5);
+                        OPTindex = 0;
+                    } else {
+                        System_printf("The pet cannot sleep during exercise...\n");
+                        System_flush();
+                    }
+                } else {
+                    for(i = 0; i < 4; i++) {
+                        OPTdata[i] = OPTdata[i+1];
+                    }
+                    petState = WAITING;
                 }
             } else {
                 OPTindex++;
             }
 
             // Save the sensor value into the global variable
-            ambientLight = data[OPTindex];
+            ambientLight = OPTdata[OPTindex];
             //programState = DATA_READY;
 
             I2C_close(i2c);
@@ -468,6 +494,9 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             programState = COLLECTING_DATA;
         }
 
+        // Play sounds
+        playBuzzer();
+
         // Once per 100ms, you can modify this
         Task_sleep(100000 / Clock_tickPeriod);
     }
@@ -539,12 +568,95 @@ int checkAverageDerivates(float *averageDerivates) {
         sprintf(output, "Z-axis movement (average derivate: %.2f)\n", averageDerivates[2]);
         System_printf(output);
         System_flush();
+        if (systemTime <= startedSleeping + 5) {
+            System_printf("The pet cannot exercise while sleeping...\n");
+            System_flush();
+        } else {
+            petState = EXERCISE;
+            System_printf("Exercising...\n");
+            System_flush();
+            startedExercise = systemTime;
+        }
     }
     if (averageDerivates[0] > 3 || averageDerivates[1] > 3 || averageDerivates[2] > 3) {
         return 1;
     } else {
         return 0;
     }
+}
+
+
+// Function that plays all the buzzer sounds.
+void playBuzzer() {
+    if (petState == FEED) {
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(2000);
+        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerClose();
+
+        Task_sleep(50000 / Clock_tickPeriod);
+
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(3000);
+        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerClose();
+
+        Task_sleep(50000 / Clock_tickPeriod);
+
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(4000);
+        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerClose();
+    }
+    if (petState == SLEEP) {
+        startedSleeping = systemTime;
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(1000);
+        Task_sleep(200000 / Clock_tickPeriod);
+        buzzerClose();
+
+        Task_sleep(200000 / Clock_tickPeriod);
+
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(800);
+        Task_sleep(400000 / Clock_tickPeriod);
+        buzzerClose();
+
+        Task_sleep(200000 / Clock_tickPeriod);
+
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(600);
+        Task_sleep(500000 / Clock_tickPeriod);
+        buzzerClose();
+    }
+    if (petState == EXERCISE) {
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(5000);
+        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerClose();
+
+        Task_sleep(50000 / Clock_tickPeriod);
+
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(2000);
+        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerClose();
+
+        Task_sleep(50000 / Clock_tickPeriod);
+
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(5000);
+        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerClose();
+
+        Task_sleep(50000 / Clock_tickPeriod);
+
+        buzzerOpen(buzzerHandle);
+        buzzerSetFrequency(2000);
+        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerClose();
+    }
+    petState = WAITING;
 }
 
 
