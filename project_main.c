@@ -53,8 +53,6 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 enum state { WAITING=1, DATA_READY, COLLECTING_DATA, SHOW_RESULTS, FEED, SLEEP, EXERCISE, PET };
 enum state programState = WAITING;
 enum state petState = WAITING;
-float startedSleeping = 0.0;
-float startedExercise  = 0.0;
 
 // Global variable for ambient light
 double ambientLight = -1000.0;
@@ -108,16 +106,25 @@ PIN_Config buzzerConfig[] = {
    PIN_TERMINATE
 };
 
+// Buzzer sounds. First values are frequencies, second values are notes' lengths and third values are pauses between notes.
+float feedSound[3][3] = {{2000, 100000, 50000},
+                         {3000, 100000, 50000},
+                         {4000, 100000, 0}};
+float sleepSound[3][3] = {{1000, 200000, 200000},
+                          {800, 400000, 200000},
+                          {600, 500000, 0}};
+float exerciseSound[3][3] = {{5000, 100000, 50000},
+                             {2000, 100000, 50000},
+                             {5000, 100000, 50000},
+                             {2000, 100000, 0}};
+
 // Calculation functions
 void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages);
 void calculateDerivates(float *array, uint8_t array_size, float *derivates);
 int checkAverageDerivates(float *averageDerivates);
-void playBuzzer();
+void playBuzzer(float sound[][3], int notes);
+void sendMessage(char *payload);
 
-// TODO: We might have to give up on the feature that prevents some actions from happening simultaneously.
-//       It makes the code harder to read and even in the exercise instructions they mention that the program
-//       has to be able to send multiple 'commands' at once. TLDR: Remove everything that prevents actions
-//       from happening simultaneously, for now at least.
 
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
@@ -149,17 +156,6 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
 void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     /*
-    // Wireless communication testing
-    uint16_t DestAddr = 0x1234;
-    char payload[16] = "ping";
-    Send6LoWPAN(DestAddr, payload, strlen(payload));
-
-    // Hox! Radio aina takaisin vastaanottotilaan ao. funktiokutssulla
-    // Hox2! T�ss� ei en�� tarkisteta paluuarvoa.. tarkistus vain alustuksessa.
-    StartReceive6LoWPAN();
-    */
-
-    /*
     // Blink led
     // If this led is on, the ambient light values stay very high (over 100)
     uint_t pinValue = PIN_getOutputValue( Board_LED1 );
@@ -176,14 +172,9 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
         if (systemTime >= buttonWasPushed + 1) {
             System_printf("Long button push\n");
             System_flush();
-            if (petState == WAITING && systemTime >= startedSleeping + 5) {
-                System_printf("Feeding...\n");
-                System_flush();
-                petState = FEED;
-            } else if (systemTime <= startedSleeping + 5) {
-                System_printf("The pet cannot be fed while it is asleep...\n");
-                System_flush();
-            }
+            System_printf("Feeding...\n");
+            System_flush();
+            petState = FEED;
         // Short push
         } else if (systemTime > 1) {
             // Change program state
@@ -369,17 +360,11 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                     }
                 }
                 if (isDarkEnough) {
-                    if (systemTime >= startedExercise + 5) {
-                        System_printf("Sleeping...\n");
-                        System_flush();
-                        petState = SLEEP;
-                        startedSleeping = systemTime;
-                        memset(OPTdata, 0, 5);
-                        OPTindex = 0;
-                    } else {
-                        System_printf("The pet cannot sleep during exercise...\n");
-                        System_flush();
-                    }
+                    System_printf("Sleeping...\n");
+                    System_flush();
+                    petState = SLEEP;
+                    memset(OPTdata, 0, 5);
+                    OPTindex = 0;
                 } else {
                     for(i = 0; i < 4; i++) {
                         OPTdata[i] = OPTdata[i+1];
@@ -457,6 +442,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
 
         // Print the data collected from the last 5 seconds
         if (programState == SHOW_RESULTS && MPUindex == 49) {
+            /*
             System_printf("rawMPUData:\n");
             System_flush();
             for (i = 0; i < 50; i++) {
@@ -483,6 +469,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             sprintf(output, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", averageDerivates[0], averageDerivates[1], averageDerivates[2], averageDerivates[3], averageDerivates[4], averageDerivates[5]);
             System_printf(output);
             System_flush();
+            */
             programState = WAITING;
             MPUindex = 0;
         }
@@ -495,7 +482,13 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
         }
 
         // Play sounds
-        playBuzzer();
+        if (petState == FEED)
+            playBuzzer(feedSound, 3);
+        else if (petState == SLEEP)
+            playBuzzer(sleepSound, 3);
+        else if (petState == EXERCISE)
+            playBuzzer(exerciseSound, 4);
+        petState = WAITING;
 
         // Once per 100ms, you can modify this
         Task_sleep(100000 / Clock_tickPeriod);
@@ -568,15 +561,9 @@ int checkAverageDerivates(float *averageDerivates) {
         sprintf(output, "Z-axis movement (average derivate: %.2f)\n", averageDerivates[2]);
         System_printf(output);
         System_flush();
-        if (systemTime <= startedSleeping + 5) {
-            System_printf("The pet cannot exercise while sleeping...\n");
-            System_flush();
-        } else {
-            petState = EXERCISE;
-            System_printf("Exercising...\n");
-            System_flush();
-            startedExercise = systemTime;
-        }
+        petState = EXERCISE;
+        System_printf("Exercising...\n");
+        System_flush();
     }
     if (averageDerivates[0] > 3 || averageDerivates[1] > 3 || averageDerivates[2] > 3) {
         return 1;
@@ -586,77 +573,31 @@ int checkAverageDerivates(float *averageDerivates) {
 }
 
 
-// Function that plays all the buzzer sounds.
-void playBuzzer() {
-    if (petState == FEED) {
+/* Function that plays all the buzzer sounds.
+ * Parameters:
+ * - float sound[][3]: Array containing the frequencies, note lengths and pauses between notes.
+ * - int notes: The amount of notes in a sound, a.k.a. the number of rows in the sound-array.
+ */
+void playBuzzer(float sound[][3], int notes) {
+    int i = 0;
+
+    for (i = 0; i < notes; i++) {
         buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(2000);
-        Task_sleep(100000 / Clock_tickPeriod);
+        buzzerSetFrequency(sound[i][0]);
+        Task_sleep(sound[i][1] / Clock_tickPeriod);
         buzzerClose();
-
-        Task_sleep(50000 / Clock_tickPeriod);
-
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(3000);
-        Task_sleep(100000 / Clock_tickPeriod);
-        buzzerClose();
-
-        Task_sleep(50000 / Clock_tickPeriod);
-
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(4000);
-        Task_sleep(100000 / Clock_tickPeriod);
-        buzzerClose();
+        Task_sleep(sound[i][2] / Clock_tickPeriod);
     }
-    if (petState == SLEEP) {
-        startedSleeping = systemTime;
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(1000);
-        Task_sleep(200000 / Clock_tickPeriod);
-        buzzerClose();
+}
 
-        Task_sleep(200000 / Clock_tickPeriod);
 
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(800);
-        Task_sleep(400000 / Clock_tickPeriod);
-        buzzerClose();
-
-        Task_sleep(200000 / Clock_tickPeriod);
-
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(600);
-        Task_sleep(500000 / Clock_tickPeriod);
-        buzzerClose();
-    }
-    if (petState == EXERCISE) {
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(5000);
-        Task_sleep(100000 / Clock_tickPeriod);
-        buzzerClose();
-
-        Task_sleep(50000 / Clock_tickPeriod);
-
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(2000);
-        Task_sleep(100000 / Clock_tickPeriod);
-        buzzerClose();
-
-        Task_sleep(50000 / Clock_tickPeriod);
-
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(5000);
-        Task_sleep(100000 / Clock_tickPeriod);
-        buzzerClose();
-
-        Task_sleep(50000 / Clock_tickPeriod);
-
-        buzzerOpen(buzzerHandle);
-        buzzerSetFrequency(2000);
-        Task_sleep(100000 / Clock_tickPeriod);
-        buzzerClose();
-    }
-    petState = WAITING;
+// Sends messages to the gateway.
+void sendMessage(char *payload) {
+    uint16_t DestAddr = 0x1234;
+    Send6LoWPAN(DestAddr, payload, strlen(payload));
+    // Note! Radio must always be restored to the receiving state.
+    // Note2! Do not check failure, only check failure when initializing (in commTask).
+    StartReceive6LoWPAN();
 }
 
 
