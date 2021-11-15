@@ -175,6 +175,7 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
             System_printf("Feeding...\n");
             System_flush();
             petState = FEED;
+            sendMessage("id:301,EAT:1\0");
         // Short push
         } else if (systemTime > 1) {
             // Change program state
@@ -196,7 +197,7 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
 
 // Data transfer task
 Void commTask(UArg arg0, UArg arg1) {
-    char payload[16]; // message buffer
+    char payload[50]; // message buffer
     uint16_t senderAddr;
 
     // Initialize radio for receiving
@@ -238,7 +239,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     uartParams.readDataMode = UART_DATA_TEXT;
     uartParams.readEcho = UART_ECHO_OFF;
     uartParams.readMode=UART_MODE_BLOCKING;
-    uartParams.baudRate = 57600; // nopeus 57600baud
+    uartParams.baudRate = 9600; // nopeus 9600baud
     uartParams.dataLength = UART_LEN_8; // 8
     uartParams.parityType = UART_PAR_NONE; // n
     uartParams.stopBits = UART_STOP_ONE; // 1
