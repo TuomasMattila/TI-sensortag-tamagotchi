@@ -50,8 +50,8 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 };
 
 // Definition of the state machine
-enum state { WAITING=1, DATA_READY, COLLECTING_DATA, SHOW_RESULTS, FEED, SLEEP, EXERCISE, PET };
-enum state programState = WAITING;
+enum state {BOOTING=1, WAITING, DATA_READY, COLLECTING_DATA, SHOW_RESULTS, FEED, SLEEP, EXERCISE, PET };
+enum state programState = BOOTING;
 enum state petState = WAITING;
 
 // Global variable for ambient light
@@ -107,16 +107,36 @@ PIN_Config buzzerConfig[] = {
 };
 
 // Buzzer sounds. First values are frequencies, second values are notes' lengths and third values are pauses between notes.
+float bootingSound[8][3] = {{783.99, 100000, 1000000},
+                            {587.33, 100000, 100000},
+                            {587.33, 100000, 100000},
+                            {659.25, 100000, 100000},
+                            {698.46, 100000, 100000},
+                            {587.33, 100000, 100000},
+                            {698.46, 100000, 100000},
+                            {783.99, 100000, 0}};
 float feedSound[3][3] = {{2000, 100000, 50000},
                          {3000, 100000, 50000},
                          {4000, 100000, 0}};
 float sleepSound[3][3] = {{1000, 200000, 200000},
                           {800, 400000, 200000},
                           {600, 500000, 0}};
-float exerciseSound[3][3] = {{5000, 100000, 50000},
+float exerciseSound[4][3] = {{5000, 100000, 50000},
                              {2000, 100000, 50000},
                              {5000, 100000, 50000},
                              {2000, 100000, 0}};
+float petSound[9][3] = {{3000, 50000, 0},
+                        {4000, 50000, 0},
+                        {2000, 50000, 100000},
+                        {3000, 50000, 0},
+                        {4000, 50000, 0},
+                        {2000, 50000, 100000},
+                        {3000, 50000, 0},
+                        {4000, 50000, 0},
+                        {2000, 50000, 0}};
+float warningSound[3][3] = {{700, 200000, 200000},
+                            {700, 200000, 200000},
+                            {700, 200000, 0}};
 
 // Calculation functions
 void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages);
@@ -124,7 +144,6 @@ void calculateDerivates(float *array, uint8_t array_size, float *derivates);
 int checkAverageDerivates(float *averageDerivates);
 void playBuzzer(float sound[][3], int notes);
 void sendMessage(char *payload);
-
 
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
@@ -139,8 +158,6 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
             System_flush();
             System_printf("Shutting down...\n");
             System_flush();
-            // Sleep for 100ms...
-            Task_sleep(100000 / Clock_tickPeriod);
             // Taikamenot
             PIN_close(powerButtonHandle);
             PINCC26XX_setWakeup(powerButtonWakeConfig);
@@ -175,7 +192,7 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
             System_printf("Feeding...\n");
             System_flush();
             petState = FEED;
-            sendMessage("id:301,EAT:1\0");
+            sendMessage("id:0301,EAT:1\0");
         // Short push
         } else if (systemTime > 1) {
             // Change program state
@@ -214,12 +231,15 @@ Void commTask(UArg arg0, UArg arg1) {
         // If true, there is a message waiting
         if (GetRXFlag()) {
             // Empty the message buffer
-            memset(payload,0,16);
+            memset(payload,0,50);
             // Read a message to the message buffer
-            Receive6LoWPAN(&senderAddr, payload, 16);
+            Receive6LoWPAN(&senderAddr, payload, 50);
             // Print the received message to the console window
             System_printf(payload);
             System_flush();
+            if (strstr(payload, "BEEP")) {
+                playBuzzer(warningSound, 3);
+            }
         }
     }
 }
@@ -251,6 +271,12 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     }
 
     while (1) {
+        // Play BOOTING -sound
+        if (programState == BOOTING) {
+            playBuzzer(bootingSound, 8);
+            programState = WAITING;
+        }
+
         // Print out sensor data as string to debug window if the state is correct
         if(programState == DATA_READY) {
             sprintf(output, "uartTask: %f\n", ambientLight);
@@ -260,7 +286,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         }
 
         sprintf(output, "Time: %.0f\n\r", systemTime);
-        UART_write(uart, output, strlen(output));
+        UART_write(uart, output, strlen(output)); // Use this to send commands when working from home.
 
 /*
         // Red led turns on/off every second if this is included
@@ -268,6 +294,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         pinValue = !pinValue;
         PIN_setOutputValue( ledHandle, Board_LED1, pinValue );
 */
+
         // Once per second, you can modify this
         Task_sleep(1000000 / Clock_tickPeriod);
     }
@@ -295,7 +322,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
     I2C_Params      i2cParams;
     I2C_Params_init(&i2cParams);
     i2cParams.bitRate = I2C_400kHz;
-    double OPTdata[5] = {0};
+    double OPTdata[10] = {0};
     int earlierTime = 0;
     int OPTindex = 0;
     int isDarkEnough = 0;
@@ -351,23 +378,27 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             */
 
             // Check whether it has been dark enough for 5 seconds
-            if (OPTindex == 4) {
-                for(i = 0; i < 5; i++) {
+            if (OPTindex == 9) {
+                for(i = 0; i < 10; i++) {
                     if(OPTdata[i] > 5) {
                         isDarkEnough = 0;
                         break;
-                    } else if (i == 4){
+                    } else if (i == 9){
                         isDarkEnough = 1;
                     }
                 }
                 if (isDarkEnough) {
-                    System_printf("Sleeping...\n");
-                    System_flush();
-                    petState = SLEEP;
-                    memset(OPTdata, 0, 5);
+                    if (petState != PET) {
+                        System_printf("Sleeping...\n");
+                        System_flush();
+                        sendMessage("id:0301,MSG1:ZZZ\0");
+                        sendMessage("id:0301,ACTIVATE:1;2;2\0");
+                        petState = SLEEP;
+                    }
+                    memset(OPTdata, 0, 10);
                     OPTindex = 0;
                 } else {
-                    for(i = 0; i < 4; i++) {
+                    for(i = 0; i < 9; i++) {
                         OPTdata[i] = OPTdata[i+1];
                     }
                     petState = WAITING;
@@ -489,6 +520,8 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             playBuzzer(sleepSound, 3);
         else if (petState == EXERCISE)
             playBuzzer(exerciseSound, 4);
+        else if (petState == PET)
+            playBuzzer(petSound, 9);
         petState = WAITING;
 
         // Once per 100ms, you can modify this
@@ -548,12 +581,12 @@ void calculateDerivates(float *array, uint8_t array_size, float *derivates) {
  */
 int checkAverageDerivates(float *averageDerivates) {
     char output[60];
-    if (averageDerivates[0] > 3) {
+    if (averageDerivates[0] > 2) {
         sprintf(output, "X-axis movement (average derivate: %.2f)\n", averageDerivates[0]);
         System_printf(output);
         System_flush();
     }
-    if (averageDerivates[1] > 3) {
+    if (averageDerivates[1] > 2) {
         sprintf(output, "Y-axis movement (average derivate: %.2f)\n", averageDerivates[1]);
         System_printf(output);
         System_flush();
@@ -565,8 +598,15 @@ int checkAverageDerivates(float *averageDerivates) {
         petState = EXERCISE;
         System_printf("Exercising...\n");
         System_flush();
+        sendMessage("id:0301,EXERCISE:4\0");
     }
-    if (averageDerivates[0] > 3 || averageDerivates[1] > 3 || averageDerivates[2] > 3) {
+    if ((averageDerivates[0] > 2 || averageDerivates[1] > 2) && averageDerivates[2] < 1) {
+        petState = PET;
+        System_printf("Being pet...\n");
+        System_flush();
+        sendMessage("id:0301,PET:3\0");
+    }
+    if (averageDerivates[0] > 2 || averageDerivates[1] > 2 || averageDerivates[2] > 3) {
         return 1;
     } else {
         return 0;
@@ -582,6 +622,10 @@ int checkAverageDerivates(float *averageDerivates) {
 void playBuzzer(float sound[][3], int notes) {
     int i = 0;
 
+    if (petState != SLEEP){
+        PIN_setOutputValue( ledHandle, Board_LED1, 1 );
+    }
+
     for (i = 0; i < notes; i++) {
         buzzerOpen(buzzerHandle);
         buzzerSetFrequency(sound[i][0]);
@@ -589,6 +633,8 @@ void playBuzzer(float sound[][3], int notes) {
         buzzerClose();
         Task_sleep(sound[i][2] / Clock_tickPeriod);
     }
+
+    PIN_setOutputValue( ledHandle, Board_LED1, 0 );
 }
 
 
