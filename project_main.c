@@ -50,12 +50,9 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 };
 
 // Definition of the state machine
-enum state {BOOTING=1, WAITING, DATA_READY, COLLECTING_DATA, SHOW_RESULTS, FEED, SLEEP, EXERCISE, PET };
+enum state {BOOTING=1, WAITING, FEED, SLEEP, EXERCISE, PET };
 enum state programState = BOOTING;
 enum state petState = WAITING;
-
-// Global variable for ambient light
-double ambientLight = -1000.0;
 
 // Global variable for system time
 float systemTime = 0.0;
@@ -145,6 +142,8 @@ int checkAverageDerivates(float *averageDerivates);
 void playBuzzer(float sound[][3], int notes);
 void sendMessage(char *payload);
 
+
+// Power button interruption handler
 Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
     // If button is pushed down
@@ -171,6 +170,7 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 }
 
 
+// Other button interruption handler
 void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     /*
     // Blink led
@@ -198,15 +198,6 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
             // Change program state
             System_printf("Short button push\n");
             System_flush();
-            if (programState == WAITING) {
-                programState = COLLECTING_DATA;
-                System_printf("programState: COLLECTING_DATA\n");
-                System_flush();
-            } else if (programState == COLLECTING_DATA) {
-                programState = SHOW_RESULTS;
-                System_printf("programState: SHOW_RESULTS\n");
-                System_flush();
-            }
         }
     }
 }
@@ -237,7 +228,7 @@ Void commTask(UArg arg0, UArg arg1) {
             // Print the received message to the console window
             System_printf(payload);
             System_flush();
-            if (strstr(payload, "BEEP")) {
+            if (strstr(payload, "301,BEEP")) {
                 playBuzzer(warningSound, 3);
             }
         }
@@ -274,14 +265,6 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         // Play BOOTING -sound
         if (programState == BOOTING) {
             playBuzzer(bootingSound, 8);
-            programState = WAITING;
-        }
-
-        // Print out sensor data as string to debug window if the state is correct
-        if(programState == DATA_READY) {
-            sprintf(output, "uartTask: %f\n", ambientLight);
-            //System_printf(output);
-            //System_flush();
             programState = WAITING;
         }
 
@@ -371,11 +354,6 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             }
             // Read sensor data and print it to the Debug window as string
             OPTdata[OPTindex] = opt3001_get_data(&i2c);
-            /*
-            sprintf(output, "OPT3001: %f\n", OPTdata[OPTindex]);
-            System_printf(output);
-            System_flush();
-            */
 
             // Check whether it has been dark enough for 5 seconds
             if (OPTindex == 9) {
@@ -407,111 +385,65 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                 OPTindex++;
             }
 
-            // Save the sensor value into the global variable
-            ambientLight = OPTdata[OPTindex];
-            //programState = DATA_READY;
-
             I2C_close(i2c);
         }
 
         // MPU9250 DATA READ
-        if (programState == COLLECTING_DATA) {
-            i2cMPU = I2C_open(Board_I2C, &i2cMPUParams);
-            if (i2cMPU == NULL) {
-                System_abort("Error Initializing I2CMPU\n");
+        i2cMPU = I2C_open(Board_I2C, &i2cMPUParams);
+        if (i2cMPU == NULL) {
+            System_abort("Error Initializing I2CMPU\n");
+        }
+
+        // Get data
+        mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
+
+        // Raw data into an array
+        rawMPUData[0][MPUindex] = systemTime;
+        rawMPUData[1][MPUindex] = ax;
+        rawMPUData[2][MPUindex] = ay;
+        rawMPUData[3][MPUindex] = az;
+        rawMPUData[4][MPUindex] = gx;
+        rawMPUData[5][MPUindex] = gy;
+        rawMPUData[6][MPUindex] = gz;
+
+        // If the rawMPUData array is full, do some calculations
+        if (MPUindex == 49) {
+
+            // Moving averages
+            for (i = 0; i < 7; i++) {
+                movavg(rawMPUData[i], 50, 3, cleanMPUData[i]);
             }
 
-            // Get data
-            mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
+            // Derivates
+            for (i = 1; i < 7; i++) {
+                calculateDerivates(cleanMPUData[i], 48, derivates[i-1]);
+            }
 
-            // Raw data into an array
-            rawMPUData[0][MPUindex] = systemTime;
-            rawMPUData[1][MPUindex] = ax;
-            rawMPUData[2][MPUindex] = ay;
-            rawMPUData[3][MPUindex] = az;
-            rawMPUData[4][MPUindex] = gx;
-            rawMPUData[5][MPUindex] = gy;
-            rawMPUData[6][MPUindex] = gz;
+            // Average derivates
+            for (i = 0; i < 6; i++) {
+                movavg(derivates[i], 47, 47, &averageDerivates[i]);
+            }
 
-            // If the rawMPUData array is full, do some calculations
-            if (MPUindex == 49) {
-
-                // Moving averages
+            // If an average derivate was big enough, 'restart' data collection
+            if (checkAverageDerivates(averageDerivates)) {
+                MPUindex = -1;
+            } else {
+                // If no average derivate was big enough, shift rawMPUData values left and continue data collection
                 for (i = 0; i < 7; i++) {
-                    movavg(rawMPUData[i], 50, 3, cleanMPUData[i]);
-                }
-
-                // Derivates
-                for (i = 1; i < 7; i++) {
-                    calculateDerivates(cleanMPUData[i], 48, derivates[i-1]);
-                }
-
-                // Average derivates
-                for (i = 0; i < 6; i++) {
-                    movavg(derivates[i], 47, 47, &averageDerivates[i]);
-                }
-
-                // If an average derivate was big enough, 'restart' data collection
-                if (checkAverageDerivates(averageDerivates)) {
-                    MPUindex = -1;
-                } else {
-                    // If no average derivate was big enough, shift rawMPUData values left and continue data collection
-                    for (i = 0; i < 7; i++) {
-                        for (j = 0; j < 49; j++) {
-                            rawMPUData[i][j] = rawMPUData[i][j+1];
-                        }
+                    for (j = 0; j < 49; j++) {
+                        rawMPUData[i][j] = rawMPUData[i][j+1];
                     }
                 }
-
             }
 
-            if (MPUindex < 49) {
-                MPUindex++;
-            }
-
-            I2C_close(i2cMPU);
         }
 
-        // Print the data collected from the last 5 seconds
-        if (programState == SHOW_RESULTS && MPUindex == 49) {
-            /*
-            System_printf("rawMPUData:\n");
-            System_flush();
-            for (i = 0; i < 50; i++) {
-                sprintf(output, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", rawMPUData[0][i], rawMPUData[1][i], rawMPUData[2][i], rawMPUData[3][i], rawMPUData[4][i], rawMPUData[5][i], rawMPUData[6][i]);
-                System_printf(output);
-                System_flush();
-            }
-            System_printf("cleanMPUData:\n");
-            System_flush();
-            for (i = 0; i < 48; i++) {
-                sprintf(output, "%.0f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", cleanMPUData[0][i], cleanMPUData[1][i], cleanMPUData[2][i], cleanMPUData[3][i], cleanMPUData[4][i], cleanMPUData[5][i], cleanMPUData[6][i]);
-                System_printf(output);
-                System_flush();
-            }
-            System_printf("derivates:\n");
-            System_flush();
-            for (i = 0; i < 47; i++) {
-                sprintf(output, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", derivates[0][i], derivates[1][i], derivates[2][i], derivates[3][i], derivates[4][i], derivates[5][i]);
-                System_printf(output);
-                System_flush();
-            }
-            System_printf("averageDerivates:\n");
-            System_flush();
-            sprintf(output, "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", averageDerivates[0], averageDerivates[1], averageDerivates[2], averageDerivates[3], averageDerivates[4], averageDerivates[5]);
-            System_printf(output);
-            System_flush();
-            */
-            programState = WAITING;
-            MPUindex = 0;
+        if (MPUindex < 49) {
+            MPUindex++;
         }
 
-        // Prevent data printing if the button was pressed before enough data was gathered
-        if (programState == SHOW_RESULTS && MPUindex < 49) {
-            System_printf("Cannot show results yet, not enough data\n");
-            System_flush();
-            programState = COLLECTING_DATA;
-        }
+        I2C_close(i2cMPU);
+
 
         // Play sounds
         if (petState == FEED)
