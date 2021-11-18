@@ -50,7 +50,7 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 };
 
 // Definition of the state machine
-enum state {BOOTING=1, WAITING, FEED, SLEEP, EXERCISE, PET };
+enum state {BOOTING=1, SHUTTING_DOWN, WAITING, FEED, SLEEP, EXERCISE, PET, WARNING, GAME_OVER };
 enum state programState = BOOTING;
 enum state petState = WAITING;
 
@@ -104,7 +104,8 @@ PIN_Config buzzerConfig[] = {
 };
 
 // Buzzer sounds. First values are frequencies, second values are notes' lengths and third values are pauses between notes.
-float bootingSound[8][3] = {{783.99, 100000, 1000000},
+float bootingSound[9][3] = {{783.99, 100000, 550000},
+                            {659.25, 100000, 550000},
                             {587.33, 100000, 100000},
                             {587.33, 100000, 100000},
                             {659.25, 100000, 100000},
@@ -134,6 +135,13 @@ float petSound[9][3] = {{3000, 50000, 0},
 float warningSound[3][3] = {{700, 200000, 200000},
                             {700, 200000, 200000},
                             {700, 200000, 0}};
+float shutDownSound[4][3] = {{698.46,100000, 50000},
+                             {349.23, 110000,50000},
+                             {174.61, 120000, 50000},
+                             {87.31, 130000,0}};
+float gameOverSound[3][3] = {{698.46,150000, 500000},
+                             {349.23, 150000, 500000},
+                             {174.61, 1000000, 0}};
 
 // Calculation functions
 void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages);
@@ -153,18 +161,16 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
     } else if (PIN_getInputValue(pinId)) {
         // Long push
         if (systemTime >= powerButtonWasPushed + 2) {
+            programState = SHUTTING_DOWN;
             System_printf("Long power button push\n");
             System_flush();
             System_printf("Shutting down...\n");
             System_flush();
-            // Taikamenot
-            PIN_close(powerButtonHandle);
-            PINCC26XX_setWakeup(powerButtonWakeConfig);
-            Power_shutdown(NULL,0);
         // Short push
         } else if (systemTime > 1) {
             System_printf("Short power button push\n");
             System_flush();
+            sendMessage("ping\0");
         }
     }
 }
@@ -186,18 +192,18 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     // If button is released
     } else if (PIN_getInputValue(pinId)) {
         // Long push
-        if (systemTime >= buttonWasPushed + 1) {
+        if (systemTime >= buttonWasPushed + 2) {
             System_printf("Long button push\n");
             System_flush();
             System_printf("Feeding...\n");
             System_flush();
             petState = FEED;
-            sendMessage("id:0301,EAT:1\0");
+            sendMessage("id:0301,EAT:2,MSG1:Eating\0");
         // Short push
         } else if (systemTime > 1) {
-            // Change program state
             System_printf("Short button push\n");
             System_flush();
+            programState = GAME_OVER;
         }
     }
 }
@@ -225,11 +231,14 @@ Void commTask(UArg arg0, UArg arg1) {
             memset(payload,0,50);
             // Read a message to the message buffer
             Receive6LoWPAN(&senderAddr, payload, 50);
-            // Print the received message to the console window
-            System_printf(payload);
-            System_flush();
-            if (strstr(payload, "301,BEEP")) {
-                playBuzzer(warningSound, 3);
+            if (strstr(payload, "301,BEEP:Too late")) {
+                System_printf("Game over\n");
+                System_flush();
+                programState = GAME_OVER;
+            } else if (strstr(payload, "301,BEEP")) {
+                System_printf(payload);
+                System_flush();
+                programState = WARNING;
             }
         }
     }
@@ -262,14 +271,35 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     }
 
     while (1) {
-        // Play BOOTING -sound
+        // Play bootingSound
         if (programState == BOOTING) {
             playBuzzer(bootingSound, 8);
             programState = WAITING;
         }
+        // Play shutDownSound
+        if (programState == SHUTTING_DOWN) {
+            playBuzzer(shutDownSound, 4);
+            programState = WAITING;
+            sendMessage("id:0301,MSG1:Device turned off\0");
+            // Taikamenot
+            PIN_close(powerButtonHandle);
+            PINCC26XX_setWakeup(powerButtonWakeConfig);
+            Power_shutdown(NULL,0);
+        }
+        // Play warningSound
+        if (programState == WARNING) {
+            playBuzzer(warningSound, 3);
+            programState = WAITING;
+        }
+        // Play gameOverSound
+        if (programState == GAME_OVER) {
+            playBuzzer(gameOverSound, 3);
+            programState = WAITING;
+        }
 
-        sprintf(output, "Time: %.0f\n\r", systemTime);
-        UART_write(uart, output, strlen(output)); // Use this to send commands when working from home.
+
+        //sprintf(output, "Time: %.0f\n\r", systemTime);
+        //UART_write(uart, output, strlen(output)); // Use this to send commands when working from home.
 
 /*
         // Red led turns on/off every second if this is included
@@ -369,8 +399,7 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
                     if (petState != PET) {
                         System_printf("Sleeping...\n");
                         System_flush();
-                        sendMessage("id:0301,MSG1:ZZZ\0");
-                        sendMessage("id:0301,ACTIVATE:1;2;2\0");
+                        sendMessage("id:0301,ACTIVATE:1;1;2,MSG1:ZZZ\0");
                         petState = SLEEP;
                     }
                     memset(OPTdata, 0, 10);
@@ -530,13 +559,13 @@ int checkAverageDerivates(float *averageDerivates) {
         petState = EXERCISE;
         System_printf("Exercising...\n");
         System_flush();
-        sendMessage("id:0301,EXERCISE:4\0");
+        sendMessage("id:0301,EXERCISE:4,MSG1:Exercising\0");
     }
     if ((averageDerivates[0] > 2 || averageDerivates[1] > 2) && averageDerivates[2] < 1) {
         petState = PET;
         System_printf("Being pet...\n");
         System_flush();
-        sendMessage("id:0301,PET:3\0");
+        sendMessage("id:0301,PET:3,MSG1:Being pet\0");
     }
     if (averageDerivates[0] > 2 || averageDerivates[1] > 2 || averageDerivates[2] > 3) {
         return 1;
