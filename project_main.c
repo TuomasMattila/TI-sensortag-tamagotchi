@@ -50,9 +50,14 @@ static const I2CCC26XX_I2CPinCfg i2cMPUCfg = {
 };
 
 // Definition of the state machine
-enum state {BOOTING=1, SHUTTING_DOWN, WAITING, FEED, SLEEP, EXERCISE, PET, WARNING, GAME_OVER };
+enum state {BOOTING=1, SHUTTING_DOWN, WAITING, BUTTON_PUSH, POWER_BUTTON_PUSH, FEED, SLEEP, EXERCISE, PET, WARNING, GAME_OVER, SENDING_DATA, NOT_SENDING_DATA};
 enum state programState = BOOTING;
 enum state petState = WAITING;
+enum state dataState = NOT_SENDING_DATA;
+
+//different foods for feeding
+char foods[5][11] = {"yogurt", "porridge", "hotdog", "kebabfries", "pizza"};
+int petFood = 0;
 
 // Global variable for system time
 float systemTime = 0.0;
@@ -142,6 +147,10 @@ float shutDownSound[4][3] = {{698.46,100000, 50000},
 float gameOverSound[3][3] = {{698.46,150000, 500000},
                              {349.23, 150000, 500000},
                              {174.61, 1000000, 0}};
+float powerButtonSound[2][3] = {{1500, 100000, 0},
+                                {1000, 100000, 0}};
+float buttonSound[2][3] = {{1000, 100000, 0},
+                           {1500, 100000, 0}};
 
 // Calculation functions
 void movavg(float *array, uint8_t array_size, uint8_t window_size, float *averages);
@@ -170,7 +179,17 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
         } else if (systemTime > 1) {
             System_printf("Short power button push\n");
             System_flush();
-            sendMessage("ping\0");
+            programState = POWER_BUTTON_PUSH;
+            if (dataState == NOT_SENDING_DATA) {
+                sendMessage("id:0301,session:start\0");
+                sendMessage("id:0301,session:start\0");
+                sendMessage("id:0301,session:start\0");
+                dataState = SENDING_DATA;
+            } else {
+                sendMessage("id:0301,session:end\0");
+                dataState = NOT_SENDING_DATA;
+            }
+
         }
     }
 }
@@ -198,12 +217,23 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
             System_printf("Feeding...\n");
             System_flush();
             petState = FEED;
-            sendMessage("id:0301,EAT:2,MSG1:Eating\0");
+            char message[80];
+            sprintf(message, "id:0301,EAT:%d,MSG1:Eating\0", petFood+1);
+            sendMessage(message);
         // Short push
         } else if (systemTime > 1) {
             System_printf("Short button push\n");
             System_flush();
-            programState = GAME_OVER;
+            programState = BUTTON_PUSH;
+            petFood++;
+            if (petFood == 5) {
+                petFood = 0;
+            }
+            char output[80] = {"id:0301,MSG2:Selected food = "};
+            strcat(output, foods[petFood]);
+            System_printf(output);
+            System_flush();
+            sendMessage(output);
         }
     }
 }
@@ -297,6 +327,16 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
             programState = WAITING;
         }
 
+        if (programState == POWER_BUTTON_PUSH) {
+            playBuzzer(powerButtonSound, 2);
+            programState = WAITING;
+        }
+
+        if (programState == BUTTON_PUSH) {
+            playBuzzer(buttonSound, 2);
+            programState = WAITING;
+        }
+
 
         //sprintf(output, "Time: %.0f\n\r", systemTime);
         //UART_write(uart, output, strlen(output)); // Use this to send commands when working from home.
@@ -385,6 +425,11 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
             // Read sensor data and print it to the Debug window as string
             OPTdata[OPTindex] = opt3001_get_data(&i2c);
 
+            if (dataState == SENDING_DATA) {
+                sprintf(output, "id:0301,light:%.2f", OPTdata[OPTindex]);
+                sendMessage(output);
+            }
+
             // Check whether it has been dark enough for 5 seconds
             if (OPTindex == 9) {
                 for(i = 0; i < 10; i++) {
@@ -425,6 +470,11 @@ Void sensorTaskFxn(UArg arg0, UArg arg1) {
 
         // Get data
         mpu9250_get_data(&i2cMPU, &ax, &ay, &az, &gx, &gy, &gz);
+
+        if (dataState == SENDING_DATA) {
+            sprintf(output, "id:0301,ax:%.2f,ay:%.2f,az:%.2f,gx:%.2f,gy:%.2f,gz:%.2f\0", ax, ay, az, gx, gy, gz);
+            sendMessage(output);
+        }
 
         // Raw data into an array
         rawMPUData[0][MPUindex] = systemTime;
