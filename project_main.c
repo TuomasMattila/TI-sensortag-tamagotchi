@@ -224,6 +224,7 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
 // Other button interruption handler
 void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
+    char output[80];
     // If button is pushed down
     if (!PIN_getInputValue(pinId)) {
         buttonWasPushed = systemTime;
@@ -231,12 +232,12 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     } else if (PIN_getInputValue(pinId)) {
         // Long push
         if (systemTime >= buttonWasPushed + 2) {
-            System_printf("Feeding...\n");
+            sprintf(output, "Feeding... (%s)\n", foods[petFood]);
+            System_printf(output);
             System_flush();
             petState = FEED;
-            char message[80];
-            sprintf(message, "id:0301,EAT:%d,MSG1:Eating\0", petFood+1);
-            sendMessage(message);
+            sprintf(output, "id:0301,EAT:%d,MSG1:Eating\0", petFood+1);
+            sendMessage(output);
         // Short push
         } else if (systemTime > 1) {
             programState = BUTTON_PUSH;
@@ -244,10 +245,10 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
             if (petFood == 5) {
                 petFood = 0;
             }
-            char output[80] = {"id:0301,MSG2:Selected food = "};
-            strcat(output, foods[petFood]);
+            sprintf(output, "Selected food = %s\n", foods[petFood]);
             System_printf(output);
             System_flush();
+            sprintf(output, "id:0301,MSG2:Selected food = %s", foods[petFood]);
             sendMessage(output);
         }
     }
@@ -278,6 +279,7 @@ Void commTask(UArg arg0, UArg arg1) {
                 System_flush();
                 programState = GAME_OVER;
             } else if (strstr(payload, "301,BEEP")) {
+                strcat(payload, "\n");
                 System_printf(payload);
                 System_flush();
                 programState = WARNING;
