@@ -1,3 +1,28 @@
+/* Introduction to computer systems 2021.
+ * Course project: Tamagotchi
+ * By: Tuomas Mattila and Aleksi Kantola
+ *
+ * Embedded software for Texas Instruments Sensortag CC2650STK.
+ * This program makes the Sensortag act like a tamagotchi.
+ * You can feed and pet it and make it exercise or sleep.
+ *
+ * Toggle power off by pressing the power button for a few seconds.
+ * Turn the device back on by pushing the power button once.
+ *
+ * Feeding: hold the upper button for a while.
+ * Petting: slide the device back and forth on a flat surface.
+ * Exercise: shake the device up and down repeatedly.
+ * Sleep: Lay the device clear side down on a table or else lower the light level.
+ *
+ * Also:
+ * Food selection: You can choose to feed the creature a selection of foods.
+ * Tap the upper button to cycle through the selections. They have different food values.
+ *
+ * Data collection: Tap the power button to begin data collection. Do so again to stop collecting.
+ *
+ */
+
+
 /* C Standard library */
 #include <stdio.h>
 #include <string.h>
@@ -55,8 +80,9 @@ enum state programState = BOOTING;
 enum state petState = WAITING;
 enum state dataState = NOT_SENDING_DATA;
 
-//different foods for feeding
+// Different foods for the tamagotchi. Each food increases the food level by index + 1.
 char foods[5][11] = {"yogurt", "porridge", "hotdog", "kebabfries", "pizza"};
+// Global variable for the currently selected petFood
 int petFood = 0;
 
 // Global variable for system time
@@ -137,9 +163,10 @@ float petSound[9][3] = {{3000, 50000, 0},
                         {3000, 50000, 0},
                         {4000, 50000, 0},
                         {2000, 50000, 0}};
-float warningSound[3][3] = {{700, 200000, 200000},
-                            {700, 200000, 200000},
-                            {700, 200000, 0}};
+float warningSound[4][3] = {{1200, 100000, 50000},
+                            {1200, 100000, 50000},
+                            {1200, 100000, 50000},
+                            {1200, 100000, 0}};
 float shutDownSound[4][3] = {{698.46,100000, 50000},
                              {349.23, 110000,50000},
                              {174.61, 120000, 50000},
@@ -177,17 +204,21 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
             System_flush();
         // Short push
         } else if (systemTime > 1) {
+            programState = POWER_BUTTON_PUSH;
             System_printf("Short power button push\n");
             System_flush();
-            programState = POWER_BUTTON_PUSH;
             if (dataState == NOT_SENDING_DATA) {
                 sendMessage("id:0301,session:start\0");
                 sendMessage("id:0301,session:start\0");
                 sendMessage("id:0301,session:start\0");
                 dataState = SENDING_DATA;
+                System_printf("Data session started\n");
+                System_flush();
             } else {
                 sendMessage("id:0301,session:end\0");
                 dataState = NOT_SENDING_DATA;
+                System_printf("Data session ended\n");
+                System_flush();
             }
 
         }
@@ -197,14 +228,6 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
 
 // Other button interruption handler
 void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
-    /*
-    // Blink led
-    // If this led is on, the ambient light values stay very high (over 100)
-    uint_t pinValue = PIN_getOutputValue( Board_LED1 );
-    pinValue = !pinValue;
-    PIN_setOutputValue( ledHandle, Board_LED1, pinValue );
-    */
-
     // If button is pushed down
     if (!PIN_getInputValue(pinId)) {
         buttonWasPushed = systemTime;
@@ -222,9 +245,9 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
             sendMessage(message);
         // Short push
         } else if (systemTime > 1) {
+            programState = BUTTON_PUSH;
             System_printf("Short button push\n");
             System_flush();
-            programState = BUTTON_PUSH;
             petFood++;
             if (petFood == 5) {
                 petFood = 0;
@@ -241,7 +264,7 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
 
 // Data transfer task
 Void commTask(UArg arg0, UArg arg1) {
-    char payload[50]; // message buffer
+    char payload[80]; // message buffer
     uint16_t senderAddr;
 
     // Initialize radio for receiving
@@ -252,15 +275,12 @@ Void commTask(UArg arg0, UArg arg1) {
 
     // Receive messages in a loop
     while (1) {
-        // NOTE: Do not send messages in this loop. It will clog the radio and
-        // others will not be able to use the channel!
-
         // If true, there is a message waiting
         if (GetRXFlag()) {
             // Empty the message buffer
-            memset(payload,0,50);
+            memset(payload,0,80);
             // Read a message to the message buffer
-            Receive6LoWPAN(&senderAddr, payload, 50);
+            Receive6LoWPAN(&senderAddr, payload, 80);
             if (strstr(payload, "301,BEEP:Too late")) {
                 System_printf("Game over\n");
                 System_flush();
@@ -283,7 +303,7 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
     UART_Handle uart;
     UART_Params uartParams;
     
-    // Alustetaan sarjaliikenne 
+    // Initialize serial communication
     UART_Params_init(&uartParams);
     uartParams.writeDataMode = UART_DATA_TEXT;
     uartParams.readDataMode = UART_DATA_TEXT;
@@ -318,35 +338,26 @@ Void uartTaskFxn(UArg arg0, UArg arg1) {
         }
         // Play warningSound
         if (programState == WARNING) {
-            playBuzzer(warningSound, 3);
+            playBuzzer(warningSound, 4);
+            sendMessage("id:0301,MSG1:WARNING\0");
             programState = WAITING;
         }
         // Play gameOverSound
         if (programState == GAME_OVER) {
             playBuzzer(gameOverSound, 3);
+            sendMessage("id:0301,MSG1:Game over\0");
             programState = WAITING;
         }
-
+        // Power button short push
         if (programState == POWER_BUTTON_PUSH) {
             playBuzzer(powerButtonSound, 2);
             programState = WAITING;
         }
-
+        // Button short push
         if (programState == BUTTON_PUSH) {
             playBuzzer(buttonSound, 2);
             programState = WAITING;
         }
-
-
-        //sprintf(output, "Time: %.0f\n\r", systemTime);
-        //UART_write(uart, output, strlen(output)); // Use this to send commands when working from home.
-
-/*
-        // Red led turns on/off every second if this is included
-        uint_t pinValue = PIN_getOutputValue( Board_LED1 );
-        pinValue = !pinValue;
-        PIN_setOutputValue( ledHandle, Board_LED1, pinValue );
-*/
 
         // Once per second, you can modify this
         Task_sleep(1000000 / Clock_tickPeriod);
