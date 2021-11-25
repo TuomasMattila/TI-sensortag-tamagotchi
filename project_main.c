@@ -198,15 +198,11 @@ Void powerFxn(PIN_Handle handle, PIN_Id pinId) {
         // Long push
         if (systemTime >= powerButtonWasPushed + 2) {
             programState = SHUTTING_DOWN;
-            System_printf("Long power button push\n");
-            System_flush();
             System_printf("Shutting down...\n");
             System_flush();
         // Short push
         } else if (systemTime > 1) {
             programState = POWER_BUTTON_PUSH;
-            System_printf("Short power button push\n");
-            System_flush();
             if (dataState == NOT_SENDING_DATA) {
                 sendMessage("id:0301,session:start\0");
                 sendMessage("id:0301,session:start\0");
@@ -235,8 +231,6 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
     } else if (PIN_getInputValue(pinId)) {
         // Long push
         if (systemTime >= buttonWasPushed + 2) {
-            System_printf("Long button push\n");
-            System_flush();
             System_printf("Feeding...\n");
             System_flush();
             petState = FEED;
@@ -246,8 +240,6 @@ void buttonFxn(PIN_Handle handle, PIN_Id pinId) {
         // Short push
         } else if (systemTime > 1) {
             programState = BUTTON_PUSH;
-            System_printf("Short button push\n");
-            System_flush();
             petFood++;
             if (petFood == 5) {
                 petFood = 0;
@@ -603,20 +595,7 @@ void calculateDerivates(float *array, uint8_t array_size, float *derivates) {
  */
 int checkAverageDerivates(float *averageDerivates) {
     char output[60];
-    if (averageDerivates[0] > 2) {
-        sprintf(output, "X-axis movement (average derivate: %.2f)\n", averageDerivates[0]);
-        System_printf(output);
-        System_flush();
-    }
-    if (averageDerivates[1] > 2) {
-        sprintf(output, "Y-axis movement (average derivate: %.2f)\n", averageDerivates[1]);
-        System_printf(output);
-        System_flush();
-    }
     if (averageDerivates[2] > 3) {
-        sprintf(output, "Z-axis movement (average derivate: %.2f)\n", averageDerivates[2]);
-        System_printf(output);
-        System_flush();
         petState = EXERCISE;
         System_printf("Exercising...\n");
         System_flush();
@@ -636,7 +615,8 @@ int checkAverageDerivates(float *averageDerivates) {
 }
 
 
-/* Function that plays all the buzzer sounds.
+/* Function that plays all the buzzer sounds. The function also turns on the red led if the
+ * tamagotchi is not sleeping.
  * Parameters:
  * - float sound[][3]: Array containing the frequencies, note lengths and pauses between notes.
  * - int notes: The amount of notes in a sound, a.k.a. the number of rows in the sound-array.
